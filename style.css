@@ -1,0 +1,176 @@
+:root {
+    --bg-deep: #020617;
+    --bg-card: #0f172a;
+    --text-main: #f8fafc;
+    --tomato: #ff6347;
+}
+
+/* 4 Reading & App Themes: Dark, Pure Black AMOLED, Sepia, White */
+html[data-theme="amoled"] body,
+html[data-theme="amoled"] .app-page,
+html[data-theme="amoled"] #zof-topbar,
+html[data-theme="amoled"] .bottom-nav {
+    background-color: #000000 !important;
+}
+html[data-theme="amoled"] .bg-slate-900,
+html[data-theme="amoled"] .bg-slate-950 {
+    background-color: #050505 !important;
+    border-color: #1a1a1a !important;
+}
+
+html[data-theme="sepia"] body,
+html[data-theme="sepia"] .app-page {
+    background-color: #f4ecd8 !important;
+    color: #3b2f2f !important;
+}
+html[data-theme="sepia"] #reader-content-box,
+html[data-theme="sepia"] #quran-verses-container {
+    background-color: #fdf6e3 !important;
+    color: #2c221e !important;
+    border-color: #d3c6aa !important;
+}
+
+html[data-theme="light"] body,
+html[data-theme="light"] .app-page {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+}
+html[data-theme="light"] #reader-content-box,
+html[data-theme="light"] #quran-verses-container {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-deep);
+    color: var(--text-main);
+    font-family: 'Inter', sans-serif;
+    overflow: hidden;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+}
+
+.font-stylish { font-family: 'Caveat', cursive; }
+.font-phase { font-family: 'Oswald', sans-serif; }
+.font-arabic { font-family: 'Amiri', serif; line-height: 2.3; }
+.text-tomato { color: var(--tomato); }
+
+/* Topbar */
+#zof-topbar {
+    height: 50px;
+    background: rgba(2, 6, 23, 0.95);
+    border-bottom: 1px solid rgba(30, 41, 59, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    flex-shrink: 0;
+    z-index: 100;
+}
+
+/* Main Workspace & Portrait Pages */
+#main-workspace {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+}
+
+.app-page {
+    display: none;
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    padding: 12px 12px 84px 12px;
+    background-color: var(--bg-deep);
+}
+
+.app-page.active-page {
+    display: block;
+}
+
+.native-scroll {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #1e293b transparent;
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* 5-Pillar Bottom Navigation Bar */
+.bottom-nav {
+    height: 62px;
+    background: rgba(9, 14, 28, 0.98);
+    backdrop-filter: blur(14px);
+    border-top: 1px solid rgba(30, 41, 59, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    padding: 0 4px;
+    flex-shrink: 0;
+    z-index: 100;
+}
+
+.nav-btn {
+    color: #64748b;
+    transition: all 0.2s ease;
+    padding: 4px 0;
+}
+.nav-btn .nav-indicator {
+    opacity: 0;
+    transform: scale(0);
+    transition: all 0.2s ease;
+}
+.nav-btn.active {
+    color: #f8fafc;
+    transform: translateY(-1px);
+}
+.nav-btn.active .nav-indicator {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* Animations */
+@keyframes floatSlow {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-5px); }
+}
+.animate-float {
+    animation: floatSlow 3.2s ease-in-out infinite;
+}
+.animate-glow {
+    filter: drop-shadow(0 0 10px currentColor);
+}
+
+/* Android OLED Power-Saving Dim Mode */
+body.oled-dim #zof-topbar,
+body.oled-dim .bottom-nav,
+body.oled-dim #ai-coach-card {
+    opacity: 0.1;
+    transition: opacity 0.3s ease;
+}
+body.oled-dim #time-display {
+    color: #475569 !important;
+}
+
+/* Quran Hifz Blur Mode */
+.hifz-blur .ayah-arabic-text {
+    filter: blur(6px);
+    transition: filter 0.2s ease;
+}
+.hifz-blur .ayah-arabic-text:hover,
+.hifz-blur .ayah-arabic-text:active {
+    filter: blur(0);
+}
