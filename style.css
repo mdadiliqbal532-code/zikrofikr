@@ -1,77 +1,143 @@
+/* ============================================================================
+   ZikrOFikr OS — Master Stylesheet (style.css)
+   12 Moon+ Reader Themes • Split-Screen Cockpit • 3D Page Curl • OLED Dim
+   ============================================================================ */
+
 :root {
     --bg-deep: #020617;
     --bg-card: #0f172a;
+    --bg-sub: #090d16;
+    --border-col: #1e293b;
     --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --reader-bg: #090d16;
+    --reader-text: #f1f5f9;
     --tomato: #ff6347;
 }
 
-/* 4 Reading & App Themes: Dark, Pure Black AMOLED, Sepia, White */
-html[data-theme="amoled"] body,
-html[data-theme="amoled"] .app-page,
-html[data-theme="amoled"] #zof-topbar,
-html[data-theme="amoled"] .bottom-nav {
-    background-color: #000000 !important;
+/* ============================================================================
+   1. 12 BUILT-IN MOON+ READER & APP THEMES
+   ============================================================================ */
+html[data-theme="dark"] {
+    --bg-deep: #020617; --bg-card: #0f172a; --bg-sub: #090d16;
+    --border-col: #1e293b; --text-main: #f8fafc; --text-muted: #94a3b8;
+    --reader-bg: #090d16; --reader-text: #f1f5f9;
 }
-html[data-theme="amoled"] .bg-slate-900,
-html[data-theme="amoled"] .bg-slate-950 {
-    background-color: #050505 !important;
-    border-color: #1a1a1a !important;
+html[data-theme="amoled"] {
+    --bg-deep: #000000; --bg-card: #050505; --bg-sub: #000000;
+    --border-col: #171717; --text-main: #f8fafc; --text-muted: #737373;
+    --reader-bg: #000000; --reader-text: #e5e5e5;
+}
+html[data-theme="sepia"] {
+    --bg-deep: #efe4cc; --bg-card: #f7eedb; --bg-sub: #fdf6e3;
+    --border-col: #d5c4a1; --text-main: #3c2a1e; --text-muted: #6e5745;
+    --reader-bg: #fdf6e3; --reader-text: #2c1e16;
+}
+html[data-theme="light"] {
+    --bg-deep: #e2e8f0; --bg-card: #ffffff; --bg-sub: #f8fafc;
+    --border-col: #cbd5e1; --text-main: #0f172a; --text-muted: #475569;
+    --reader-bg: #ffffff; --reader-text: #0f172a;
+}
+html[data-theme="nord"] {
+    --bg-deep: #242933; --bg-card: #2e3440; --bg-sub: #3b4252;
+    --border-col: #434c5e; --text-main: #eceff4; --text-muted: #d8dee9;
+    --reader-bg: #2e3440; --reader-text: #eceff4;
+}
+html[data-theme="solarized"] {
+    --bg-deep: #00212b; --bg-card: #002b36; --bg-sub: #073642;
+    --border-col: #094656; --text-main: #93a1a1; --text-muted: #657b83;
+    --reader-bg: #002b36; --reader-text: #eee8d5;
+}
+html[data-theme="mint"] {
+    --bg-deep: #dcedc8; --bg-card: #e8f5e9; --bg-sub: #f1f8e9;
+    --border-col: #a5d6a7; --text-main: #1b5e20; --text-muted: #388e3c;
+    --reader-bg: #f1f8e9; --reader-text: #1b3b1e;
+}
+html[data-theme="nightred"] {
+    --bg-deep: #0a0000; --bg-card: #140202; --bg-sub: #080000;
+    --border-col: #380707; --text-main: #fca5a5; --text-muted: #b91c1c;
+    --reader-bg: #090000; --reader-text: #f87171;
+}
+html[data-theme="forest"] {
+    --bg-deep: #06130d; --bg-card: #0c2117; --bg-sub: #081810;
+    --border-col: #163a29; --text-main: #ecfdf5; --text-muted: #6ee7b7;
+    --reader-bg: #081810; --reader-text: #d1fae5;
+}
+html[data-theme="coffee"] {
+    --bg-deep: #140e0b; --bg-card: #211713; --bg-sub: #18110e;
+    --border-col: #382821; --text-main: #f5ebe6; --text-muted: #b89f94;
+    --reader-bg: #18110e; --reader-text: #ede0d4;
+}
+html[data-theme="paper"] {
+    --bg-deep: #dcdad3; --bg-card: #ebe9e1; --bg-sub: #f4f3ee;
+    --border-col: #bab7ad; --text-main: #222220; --text-muted: #575652;
+    --reader-bg: #f4f3ee; --reader-text: #1c1c1a;
+}
+html[data-theme="midnight"] {
+    --bg-deep: #060814; --bg-card: #0d1226; --bg-sub: #090c1a;
+    --border-col: #1e264a; --text-main: #e0e7ff; --text-muted: #818cf8;
+    --reader-bg: #090c1a; --reader-text: #e0e7ff;
 }
 
-html[data-theme="sepia"] body,
-html[data-theme="sepia"] .app-page {
-    background-color: #f4ecd8 !important;
-    color: #3b2f2f !important;
+/* Automatic Theme Variable Binding (Fixes Sepia/Light/Mint/Paper Contrast!) */
+body, .app-page {
+    background-color: var(--bg-deep) !important;
+    color: var(--text-main) !important;
 }
-html[data-theme="sepia"] #reader-content-box,
-html[data-theme="sepia"] #quran-verses-container {
-    background-color: #fdf6e3 !important;
-    color: #2c221e !important;
-    border-color: #d3c6aa !important;
+.bg-slate-900, .bg-slate-900\/85, .bg-slate-900\/80, .bg-slate-900\/90 {
+    background-color: var(--bg-card) !important;
+    border-color: var(--border-col) !important;
+}
+.bg-slate-950 {
+    background-color: var(--bg-sub) !important;
+    border-color: var(--border-col) !important;
+}
+html[data-theme="sepia"] .text-white,
+html[data-theme="sepia"] .text-slate-100,
+html[data-theme="sepia"] .text-slate-200,
+html[data-theme="sepia"] .text-slate-300,
+html[data-theme="light"] .text-white,
+html[data-theme="light"] .text-slate-100,
+html[data-theme="light"] .text-slate-200,
+html[data-theme="light"] .text-slate-300,
+html[data-theme="mint"] .text-white,
+html[data-theme="mint"] .text-slate-100,
+html[data-theme="mint"] .text-slate-200,
+html[data-theme="mint"] .text-slate-300,
+html[data-theme="paper"] .text-white,
+html[data-theme="paper"] .text-slate-100,
+html[data-theme="paper"] .text-slate-200,
+html[data-theme="paper"] .text-slate-300 {
+    color: var(--text-main) !important;
 }
 
-html[data-theme="light"] body,
-html[data-theme="light"] .app-page {
-    background-color: #f1f5f9 !important;
-    color: #0f172a !important;
-}
-html[data-theme="light"] #reader-content-box,
-html[data-theme="light"] #quran-verses-container {
-    background-color: #ffffff !important;
-    color: #0f172a !important;
-}
-
+/* ============================================================================
+   2. CORE LAYOUT, TOPBAR, BOTTOM NAV & LAPTOP SPLIT-SCREEN COCKPIT
+   ============================================================================ */
 * {
     box-sizing: border-box;
     -webkit-tap-highlight-color: transparent;
 }
-
 html, body {
     margin: 0;
     padding: 0;
     width: 100%;
     height: 100%;
-    background-color: var(--bg-deep);
-    color: var(--text-main);
     font-family: 'Inter', sans-serif;
     overflow: hidden;
-}
-
-body {
     display: flex;
     flex-direction: column;
 }
 
 .font-stylish { font-family: 'Caveat', cursive; }
 .font-phase { font-family: 'Oswald', sans-serif; }
-.font-arabic { font-family: 'Amiri', serif; line-height: 2.3; }
+.font-arabic { font-family: 'Amiri', serif; line-height: 2.35; }
 .text-tomato { color: var(--tomato); }
 
-/* Topbar */
 #zof-topbar {
     height: 50px;
-    background: rgba(2, 6, 23, 0.95);
-    border-bottom: 1px solid rgba(30, 41, 59, 0.9);
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-col);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -80,12 +146,12 @@ body {
     z-index: 100;
 }
 
-/* Main Workspace & Portrait Pages */
 #main-workspace {
     flex: 1;
     position: relative;
     overflow: hidden;
     width: 100%;
+    display: flex;
 }
 
 .app-page {
@@ -94,27 +160,30 @@ body {
     height: 100%;
     overflow-y: auto;
     padding: 12px 12px 84px 12px;
-    background-color: var(--bg-deep);
 }
-
 .app-page.active-page {
     display: block;
 }
 
-.native-scroll {
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
-    scrollbar-color: #1e293b transparent;
+/* Laptop / Tablet Split-Screen Cockpit Mode (Reader Left + AI Hub Right) */
+@media (min-width: 1024px) {
+    body.split-cockpit-active #page-library,
+    body.split-cockpit-active #page-ai {
+        display: block !important;
+        width: 50% !important;
+        border-right: 1px solid var(--border-col);
+    }
+    body.split-cockpit-active #page-timer,
+    body.split-cockpit-active #page-tasks,
+    body.split-cockpit-active #page-settings {
+        display: none !important;
+    }
 }
-.no-scrollbar::-webkit-scrollbar { display: none; }
-.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-/* 5-Pillar Bottom Navigation Bar */
 .bottom-nav {
-    height: 62px;
-    background: rgba(9, 14, 28, 0.98);
-    backdrop-filter: blur(14px);
-    border-top: 1px solid rgba(30, 41, 59, 0.9);
+    height: 60px;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border-col);
     display: flex;
     align-items: center;
     justify-content: space-around;
@@ -122,9 +191,8 @@ body {
     flex-shrink: 0;
     z-index: 100;
 }
-
 .nav-btn {
-    color: #64748b;
+    color: var(--text-muted);
     transition: all 0.2s ease;
     padding: 4px 0;
 }
@@ -134,7 +202,7 @@ body {
     transition: all 0.2s ease;
 }
 .nav-btn.active {
-    color: #f8fafc;
+    color: var(--text-main);
     transform: translateY(-1px);
 }
 .nav-btn.active .nav-indicator {
@@ -142,30 +210,67 @@ body {
     transform: scale(1);
 }
 
-/* Animations */
-@keyframes floatSlow {
-    0%, 100% { transform: translateY(0px); }
-    50% { transform: translateY(-5px); }
-}
-.animate-float {
-    animation: floatSlow 3.2s ease-in-out infinite;
-}
-.animate-glow {
-    filter: drop-shadow(0 0 10px currentColor);
+/* ============================================================================
+   3. MOON+ READER PRO: PAGE CURL, DUAL-PAGE, HIGHLIGHTS & IMMERSIVE MODE
+   ============================================================================ */
+#reader-content-box, #quran-verses-container {
+    background-color: var(--reader-bg) !important;
+    color: var(--reader-text) !important;
+    border-color: var(--border-col) !important;
 }
 
-/* Android OLED Power-Saving Dim Mode */
-body.oled-dim #zof-topbar,
-body.oled-dim .bottom-nav,
-body.oled-dim #ai-coach-card {
-    opacity: 0.1;
-    transition: opacity 0.3s ease;
-}
-body.oled-dim #time-display {
-    color: #475569 !important;
+/* Dual-Page Landscape Book Spread */
+#reader-content-box.dual-page-mode {
+    column-count: 2;
+    column-gap: 2.5rem;
+    column-rule: 1px solid var(--border-col);
 }
 
-/* Quran Hifz Blur Mode */
+/* PDF / Image Night Invert Mode */
+#reader-content-box.pdf-night-invert img,
+#reader-content-box.pdf-night-invert canvas {
+    filter: invert(0.92) hue-rotate(180deg);
+}
+
+/* Full-Screen Immersive Reading Mode */
+body.reader-fullscreen #zof-topbar,
+body.reader-fullscreen .bottom-nav {
+    display: none !important;
+}
+body.reader-fullscreen #reader-content-box {
+    max-height: 86vh !important;
+}
+
+/* Page Turn Animations: 3D Curl, Slide, Fade */
+@keyframes pageCurlEffect {
+    0% { transform: perspective(1200px) rotateY(-18deg); opacity: 0.4; transform-origin: left center; }
+    100% { transform: perspective(1200px) rotateY(0deg); opacity: 1; transform-origin: left center; }
+}
+@keyframes pageSlideEffect {
+    0% { transform: translateX(28px); opacity: 0.3; }
+    100% { transform: translateX(0); opacity: 1; }
+}
+@keyframes pageFadeEffect {
+    0% { opacity: 0.15; }
+    100% { opacity: 1; }
+}
+.anim-page-curl { animation: pageCurlEffect 0.32s cubic-bezier(0.22, 1, 0.36, 1); }
+.anim-page-slide { animation: pageSlideEffect 0.25s ease-out; }
+.anim-page-fade { animation: pageFadeEffect 0.25s ease-in-out; }
+
+/* 6 Semantic Highlight Colors & Styles */
+.hl-yellow { background: rgba(250, 204, 21, 0.28); border-bottom: 2px solid #eab308; padding: 0 2px; border-radius: 3px; }
+.hl-green  { background: rgba(16, 185, 129, 0.28); border-bottom: 2px solid #10b981; padding: 0 2px; border-radius: 3px; }
+.hl-blue   { background: rgba(59, 130, 246, 0.28); border-bottom: 2px solid #3b82f6; padding: 0 2px; border-radius: 3px; }
+.hl-orange { background: rgba(249, 115, 22, 0.28); border-bottom: 2px solid #f97316; padding: 0 2px; border-radius: 3px; }
+.hl-red    { background: rgba(239, 68, 68, 0.28);  border-bottom: 2px wavy #ef4444;  padding: 0 2px; border-radius: 3px; }
+.hl-purple { background: rgba(168, 85, 247, 0.28); border-bottom: 2px solid #a855f7; padding: 0 2px; border-radius: 3px; }
+.hl-underline { text-decoration: underline solid #38bdf8 2px; text-underline-offset: 3px; }
+.tts-active-sentence { background: rgba(59, 130, 246, 0.35); border-radius: 4px; padding: 1px 3px; }
+
+/* ============================================================================
+   4. QURAN HIFZ BLUR, OLED DIM & FLOAT ANIMATIONS
+   ============================================================================ */
 .hifz-blur .ayah-arabic-text {
     filter: blur(6px);
     transition: filter 0.2s ease;
@@ -174,3 +279,37 @@ body.oled-dim #time-display {
 .hifz-blur .ayah-arabic-text:active {
     filter: blur(0);
 }
+.quran-word {
+    cursor: pointer;
+    padding: 0 2px;
+    border-radius: 4px;
+    transition: background 0.15s ease;
+}
+.quran-word:hover {
+    background: rgba(16, 185, 129, 0.22);
+}
+
+@keyframes floatSlow {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-5px); }
+}
+.animate-float { animation: floatSlow 3.2s ease-in-out infinite; }
+.animate-glow { filter: drop-shadow(0 0 10px currentColor); }
+
+body.oled-dim #zof-topbar,
+body.oled-dim .bottom-nav,
+body.oled-dim #ai-coach-card {
+    opacity: 0.08;
+    transition: opacity 0.3s ease;
+}
+body.oled-dim #time-display {
+    color: #475569 !important;
+}
+
+.native-scroll {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-col) transparent;
+}
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
