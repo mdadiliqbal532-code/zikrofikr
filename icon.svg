@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Deep Midnight Slate Background Gradient -->
+    <radialGradient id="bgGrad" cx="50%" cy="45%" r="65%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="60%" stop-color="#020617" />
+      <stop offset="100%" stop-color="#000000" />
+    </radialGradient>
+
+    <!-- Gold & Amber Calligraphy Gradient -->
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fde68a" />
+      <stop offset="50%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+
+    <!-- Emerald Deen Glow -->
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+
+    <!-- Blue Study Glow -->
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa" />
+      <stop offset="100%" stop-color="#2563eb" />
+    </linearGradient>
+
+    <!-- Soft Drop Shadow -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#f59e0b" flood-opacity="0.35" />
+    </filter>
+  </defs>
+
+  <!-- Rounded Android Squircle App Icon Base -->
+  <rect width="512" height="512" rx="115" fill="url(#bgGrad)" />
+  <rect x="14" y="14" width="484" height="484" rx="102" fill="none" stroke="url(#goldGrad)" stroke-width="3" opacity="0.4" />
+
+  <!-- Subtle Islamic Geometric 8-Point Star Halo in Background -->
+  <g opacity="0.12" stroke="#38bdf8" stroke-width="2" fill="none" transform="translate(256,240)">
+    <rect x="-150" y="-150" width="300" height="300" rx="16" />
+    <rect x="-150" y="-150" width="300" height="300" rx="16" transform="rotate(45)" />
+    <circle cx="0" cy="0" r="175" stroke="#10b981" />
+  </g>
+
+  <!-- Top Crescent & Focus Star (Symbolizing Zikr & Barakah) -->
+  <path d="M256 58 A34 34 0 1 0 288 102 A28 28 0 1 1 256 58 Z" fill="url(#emeraldGrad)" filter="url(#glow)" />
+  <polygon points="278,66 281,74 289,74 283,79 285,87 278,82 271,87 273,79 267,74 275,74" fill="#fde68a" />
+
+  <!-- Center Clear Arabic App Name: ذِكْر وَفِكْر -->
+  <text x="256" y="248" text-anchor="middle" font-family="&#39;Amiri&#39;, &#39;Traditional Arabic&#39;, &#39;Scheherazade New&#39;, serif" font-size="92" font-weight="bold" fill="url(#goldGrad)" filter="url(#glow)">
+    ذِكْر وَفِكْر
+  </text>
+
+  <!-- Open Illuminated Book Motifs Below (Symbolizing Fikr / Deep Study) -->
+  <!-- Left Wing (Emerald - Deen) -->
+  <path d="M116 330 Q186 310 250 345 L250 395 Q186 362 116 380 Z" fill="url(#emeraldGrad)" opacity="0.9" />
+  <!-- Right Wing (Royal Blue - Study & Science) -->
+  <path d="M396 330 Q326 310 262 345 L262 395 Q326 362 396 380 Z" fill="url(#blueGrad)" opacity="0.9" />
+  <!-- Center Spine -->
+  <rect x="251" y="342" width="10" height="55" rx="4" fill="#fde68a" />
+
+  <!-- Subtitle Badge -->
+  <text x="256" y="446" text-anchor="middle" font-family="&#39;Inter&#39;, sans-serif" font-size="22" font-weight="800" letter-spacing="6" fill="#94a3b8">
+    ZIKR • O • FIKR
+  </text>
+</svg>
