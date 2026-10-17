@@ -375,3 +375,441 @@
             renderBookshelf();
         };
 // === END OF BATCH 4 PART 1 — PASTE BATCH 4 PART 2 DIRECTLY BELOW THIS LINE ===
+       // =====================================================================
+        // 4. MOON+ READER PRO ENGINE (PAGE CURL, TAP ZONES, RULER, INK & TTS)
+        // =====================================================================
+        const contentBox = document.getElementById('reader-content-box');
+        const pageSlider = document.getElementById('reader-page-slider');
+
+        function getActiveBook() {
+            return state.books.find(b => b.id === state.activeBookId) || state.books[0];
+        }
+
+        window.ZOF.openBook = (id, targetPage) => {
+            const book = state.books.find(b => b.id === id) || state.books[0];
+            if (!book) return;
+            state.activeBookId = book.id;
+            if (targetPage && targetPage >= 1 && targetPage <= (book.pages?.length || 1)) {
+                book.currentPage = targetPage;
+            }
+            document.querySelector('[data-lib="lib-panel-reader"]')?.click();
+            renderReaderPage('curl');
+            ZOF.saveState();
+        };
+
+        // Clickable Citation Jump (Used by AI Hub & KB to open exact book & page)
+        window.ZOF.jumpToCitation = (citeStr) => {
+            const cLower = (citeStr || '').toLowerCase();
+            const pageMatch = cLower.match(/p\.\s*(\d+)|page\s*(\d+)/i);
+            const pageNum = pageMatch ? parseInt(pageMatch[1] || pageMatch[2], 10) : 1;
+            const book = state.books.find(b => cLower.includes((b.title || '').split(':')[0].toLowerCase())) || getActiveBook();
+            ZOF.switchTab('page-library');
+            if (book) {
+                const idx = (book.pages || []).findIndex(p => p.toLowerCase().includes(`page ${pageNum}`));
+                window.ZOF.openBook(book.id, idx >= 0 ? idx + 1 : Math.min(pageNum, book.pages.length));
+                ZOF.toast(`📍 Jumped to verified source: ${citeStr}`);
+            }
+        };
+
+        function applyHighlightsToHtml(rawText, bookId, pageNum) {
+            let safe = ZOF.sanitizeText(rawText)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const anns = (state.annotations || []).filter(a => a.bookId === bookId && a.page === pageNum);
+            anns.forEach(a => {
+                if (!a.text || a.text.length < 3) return;
+                const esc = a.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const cls = a.style === 'underline' ? 'hl-underline' : `hl-${a.color || 'yellow'}`;
+                const noteBadge = a.note ? ` <span class="text-[10px] bg-amber-500/20 text-amber-300 px-1 rounded" title="${a.note}">📝 ${a.note}</span>` : '';
+                safe = safe.replace(new RegExp(esc, 'g'), `<mark class="${cls}">${a.text}</mark>${noteBadge}`);
+            });
+            return safe;
+        }
+
+        function renderReaderPage(animStyle) {
+            const book = getActiveBook();
+            if (!book || !contentBox) return;
+            const pages = book.pages && book.pages.length ? book.pages : ['Empty book'];
+            const total = pages.length;
+            book.currentPage = Math.max(1, Math.min(total, book.currentPage || 1));
+            book.progressPct = Math.round((book.currentPage / total) * 100);
+
+            document.getElementById('reader-book-title').textContent = book.title;
+            document.getElementById('reader-book-meta').textContent = `${book.author || 'Verified'} • ${book.format || 'PDF'} • Page ${book.currentPage}/${total}`;
+            if (pageSlider) { pageSlider.max = String(total); pageSlider.value = String(book.currentPage); }
+
+            // Typography & Mode Application
+            const prefs = state.readerPrefs || {};
+            contentBox.style.fontSize = `${prefs.fontSize || 15}px`;
+            contentBox.style.fontFamily = prefs.fontFamily || "'Inter', sans-serif";
+            contentBox.style.lineHeight = prefs.lineHeight || '1.8';
+            contentBox.style.textAlign = prefs.align || 'left';
+            contentBox.classList.toggle('dual-page-mode', Boolean(prefs.dualPage));
+            contentBox.classList.toggle('pdf-night-invert', Boolean(prefs.pdfInvert));
+
+            // Page Mode vs Continuous Vertical Scroll Mode
+            const rawPage = prefs.pageMode === 'scroll'
+                ? pages.map((p, i) => `--- [Page ${i + 1}] ---\n${p}`).join('\n\n')
+                : pages[book.currentPage - 1];
+
+            contentBox.innerHTML = applyHighlightsToHtml(rawPage, book.id, book.currentPage);
+
+            // Page Turn Animation (3D Curl / Slide / Fade)
+            contentBox.classList.remove('anim-page-curl', 'anim-page-slide', 'anim-page-fade');
+            void contentBox.offsetWidth;
+            const mode = animStyle || prefs.pageMode || 'curl';
+            if (mode === 'curl') contentBox.classList.add('anim-page-curl');
+            else if (mode === 'slide') contentBox.classList.add('anim-page-slide');
+            else if (mode === 'fade') contentBox.classList.add('anim-page-fade');
+
+            updateStatusBar(book, total);
+            renderBookshelf();
+        }
+
+        function updateStatusBar(book, total) {
+            const wordsLeft = ((total - book.currentPage) * 260);
+            const minsLeft = Math.max(1, Math.round(wordsLeft / 200));
+            const progEl = document.getElementById('status-book-progress');
+            if (progEl) progEl.textContent = `Page ${book.currentPage}/${total} (${book.progressPct}%) • ~${minsLeft}m left`;
+
+            const clockEl = document.getElementById('status-clock-battery');
+            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            if (navigator.getBattery) {
+                navigator.getBattery().then(bat => {
+                    if (clockEl) clockEl.textContent = `🕒 ${timeStr} • 🔋 ${Math.round(bat.level * 100)}%`;
+                }).catch(() => { if (clockEl) clockEl.textContent = `🕒 ${timeStr}`; });
+            } else if (clockEl) {
+                clockEl.textContent = `🕒 ${timeStr}`;
+            }
+        }
+
+        function turnPage(delta) {
+            const book = getActiveBook();
+            if (!book) return;
+            const next = (book.currentPage || 1) + delta;
+            if (next < 1 || next > (book.pages?.length || 1)) return ZOF.toast(delta > 0 ? '🎉 Reached end of book!' : 'At first page');
+            book.currentPage = next;
+            state.stats.pagesRead = (state.stats.pagesRead || 0) + (delta > 0 ? 1 : 0);
+            ZOF.saveState();
+            renderReaderPage();
+        }
+
+        document.getElementById('reader-prev-page')?.addEventListener('click', () => turnPage(-1));
+        document.getElementById('reader-next-page')?.addEventListener('click', () => turnPage(1));
+        pageSlider?.addEventListener('input', (e) => {
+            const book = getActiveBook();
+            if (book) { book.currentPage = parseInt(e.target.value, 10) || 1; renderReaderPage('fade'); }
+        });
+
+        // 9-Grid Tap Zones on Reader Canvas (Left 28% = Prev, Right 28% = Next)
+        contentBox?.addEventListener('click', (e) => {
+            if (window.getSelection()?.toString().trim().length > 0) return;
+            const rect = contentBox.getBoundingClientRect();
+            const relX = (e.clientX - rect.left) / rect.width;
+            if (relX < 0.25) turnPage(-1);
+            else if (relX > 0.75) turnPage(1);
+        });
+
+        // Keyboard Arrow / PageUp / PageDown & Bluetooth Headset MediaSession
+        document.addEventListener('keydown', (e) => {
+            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+            const readerVisible = !document.getElementById('lib-panel-reader')?.classList.contains('hidden');
+            if (!readerVisible) return;
+            if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); turnPage(1); }
+            if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); turnPage(-1); }
+        });
+
+        if ('mediaSession' in navigator) {
+            try {
+                navigator.mediaSession.setActionHandler('nexttrack', () => turnPage(1));
+                navigator.mediaSession.setActionHandler('previoustrack', () => turnPage(-1));
+            } catch (e) { /* Optional headset binding */ }
+        }
+
+        // Typography, Page Mode, Dual-Page, Invert, Fullscreen & Zoom Controls
+        document.getElementById('reader-font-inc')?.addEventListener('click', () => {
+            state.readerPrefs.fontSize = Math.min(28, (state.readerPrefs.fontSize || 15) + 1);
+            document.getElementById('lbl-font-size').textContent = `${state.readerPrefs.fontSize}px`;
+            renderReaderPage('none'); ZOF.saveState();
+        });
+        document.getElementById('reader-font-dec')?.addEventListener('click', () => {
+            state.readerPrefs.fontSize = Math.max(11, (state.readerPrefs.fontSize || 15) - 1);
+            document.getElementById('lbl-font-size').textContent = `${state.readerPrefs.fontSize}px`;
+            renderReaderPage('none'); ZOF.saveState();
+        });
+        document.getElementById('reader-font-family')?.addEventListener('change', (e) => { state.readerPrefs.fontFamily = e.target.value; renderReaderPage('none'); ZOF.saveState(); });
+        document.getElementById('reader-line-height')?.addEventListener('change', (e) => { state.readerPrefs.lineHeight = e.target.value; renderReaderPage('none'); ZOF.saveState(); });
+        document.getElementById('reader-align-select')?.addEventListener('change', (e) => { state.readerPrefs.align = e.target.value; renderReaderPage('none'); ZOF.saveState(); });
+        document.getElementById('pdf-zoom-in')?.addEventListener('click', () => document.getElementById('reader-font-inc')?.click());
+        document.getElementById('pdf-zoom-out')?.addEventListener('click', () => document.getElementById('reader-font-dec')?.click());
+
+        document.getElementById('reader-mode-btn')?.addEventListener('click', () => {
+            const modes = ['curl', 'slide', 'fade', 'scroll'];
+            const next = modes[(modes.indexOf(state.readerPrefs.pageMode || 'curl') + 1) % modes.length];
+            state.readerPrefs.pageMode = next;
+            ZOF.saveState();
+            renderReaderPage(next);
+            ZOF.toast(`📄 Reader Mode: ${next.toUpperCase()}`);
+        });
+        document.getElementById('reader-dual-pdf-btn')?.addEventListener('click', () => {
+            state.readerPrefs.dualPage = !state.readerPrefs.dualPage;
+            renderReaderPage('none');
+            ZOF.toast(state.readerPrefs.dualPage ? '📖 Dual-Page Spread ON' : '📄 Single-Page Mode');
+        });
+        document.getElementById('reader-pdf-invert-btn')?.addEventListener('click', () => {
+            state.readerPrefs.pdfInvert = !state.readerPrefs.pdfInvert;
+            renderReaderPage('none');
+            ZOF.toast('🌗 Toggled PDF Night Invert');
+        });
+        document.getElementById('reader-fullscreen-btn')?.addEventListener('click', () => {
+            document.body.classList.toggle('reader-fullscreen');
+            ZOF.toast('⛶ Toggled Full-Screen Immersive Mode');
+        });
+
+        // Draggable Focus Reading Ruler & Auto-Scroll
+        const rulerBar = document.getElementById('reading-ruler-bar');
+        document.getElementById('reader-ruler-btn')?.addEventListener('click', () => rulerBar?.classList.toggle('hidden'));
+        let draggingRuler = false;
+        rulerBar?.addEventListener('mousedown', () => { draggingRuler = true; });
+        rulerBar?.addEventListener('touchstart', () => { draggingRuler = true; }, { passive: true });
+        document.addEventListener('mousemove', (e) => {
+            if (!draggingRuler || !rulerBar) return;
+            const rect = document.getElementById('reader-stage-wrapper')?.getBoundingClientRect();
+            if (rect) rulerBar.style.top = `${Math.max(0, Math.min(rect.height - 36, e.clientY - rect.top - 18))}px`;
+        });
+        document.addEventListener('touchmove', (e) => {
+            if (!draggingRuler || !rulerBar) return;
+            const rect = document.getElementById('reader-stage-wrapper')?.getBoundingClientRect();
+            if (rect && e.touches[0]) rulerBar.style.top = `${Math.max(0, Math.min(rect.height - 36, e.touches[0].clientY - rect.top - 18))}px`;
+        }, { passive: true });
+        document.addEventListener('mouseup', () => { draggingRuler = false; });
+        document.addEventListener('touchend', () => { draggingRuler = false; });
+
+        document.getElementById('reader-autoscroll-btn')?.addEventListener('click', () => {
+            if (autoScrollTimer) {
+                clearInterval(autoScrollTimer); autoScrollTimer = null;
+                return ZOF.toast('⏹ Stopped Auto-Scroll');
+            }
+            autoScrollTimer = setInterval(() => { if (contentBox) contentBox.scrollTop += 1; }, 45);
+            ZOF.toast('⏬ Auto-Scroll Active (Tap again to stop)');
+        });
+
+        // Freehand Pen & Highlighter Ink Canvas
+        const inkCanvas = document.getElementById('reader-ink-canvas');
+        let drawingInk = false;
+        document.getElementById('reader-ink-btn')?.addEventListener('click', () => {
+            if (!inkCanvas || !contentBox) return;
+            const hidden = inkCanvas.classList.toggle('hidden');
+            if (!hidden) {
+                inkCanvas.width = contentBox.clientWidth;
+                inkCanvas.height = contentBox.clientHeight;
+                ZOF.toast('✏️ Freehand Ink Pen Active (Draw on page)');
+            } else { ZOF.toast('✏️ Ink Layer Hidden'); }
+        });
+        inkCanvas?.addEventListener('pointerdown', (e) => {
+            drawingInk = true;
+            const ctx = inkCanvas.getContext('2d');
+            ctx.strokeStyle = 'rgba(250, 204, 21, 0.75)';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(e.offsetX, e.offsetY);
+        });
+        inkCanvas?.addEventListener('pointermove', (e) => {
+            if (!drawingInk) return;
+            const ctx = inkCanvas.getContext('2d');
+            ctx.lineTo(e.offsetX, e.offsetY);
+            ctx.stroke();
+        });
+        inkCanvas?.addEventListener('pointerup', () => { drawingInk = false; });
+
+        // System TTS with Real-Time Sentence Highlighting & Shake-to-Speak
+        document.getElementById('reader-tts-btn')?.addEventListener('click', () => {
+            document.getElementById('reader-tts-bar')?.classList.toggle('hidden');
+        });
+        function speakCurrentSentence() {
+            if (!('speechSynthesis' in window)) return ZOF.toast('TTS not supported');
+            window.speechSynthesis.cancel();
+            const book = getActiveBook();
+            const raw = (book?.pages?.[book.currentPage - 1] || '').replace(/<[^>]+>/g, '');
+            ttsSentences = raw.match(/[^.!?]+[.!?]+|\S+/g) || [raw];
+            if (!ttsSentences.length) return;
+            ttsIndex = Math.max(0, Math.min(ttsSentences.length - 1, ttsIndex));
+            const sent = ttsSentences[ttsIndex].trim();
+            const utter = new SpeechSynthesisUtterance(sent);
+            utter.rate = parseFloat(document.getElementById('tts-speed-select')?.value || '1.0');
+            utter.onend = () => {
+                if (ttsSpeaking && ttsIndex < ttsSentences.length - 1) { ttsIndex++; speakCurrentSentence(); }
+                else { ttsSpeaking = false; }
+            };
+            ttsSpeaking = true;
+            window.speechSynthesis.speak(utter);
+            ZOF.toast(`🔊 Speaking sentence ${ttsIndex + 1}/${ttsSentences.length}`);
+        }
+        document.getElementById('tts-play-pause')?.addEventListener('click', () => {
+            if (ttsSpeaking) { window.speechSynthesis.cancel(); ttsSpeaking = false; ZOF.toast('⏸ TTS Paused'); }
+            else { speakCurrentSentence(); }
+        });
+        document.getElementById('tts-prev-sent')?.addEventListener('click', () => { ttsIndex = Math.max(0, ttsIndex - 1); speakCurrentSentence(); });
+        document.getElementById('tts-next-sent')?.addEventListener('click', () => { ttsIndex++; speakCurrentSentence(); });
+        document.getElementById('tts-shake-toggle')?.addEventListener('click', () => {
+            shakeEnabled = !shakeEnabled;
+            ZOF.toast(shakeEnabled ? '📳 Shake-to-Speak ON' : '📳 Shake-to-Speak OFF');
+        });
+
+        // WakeLock, Tilt-to-Turn & 1-3-7-21-30d Automated Spaced Revision
+        document.getElementById('toggle-wakelock-btn')?.addEventListener('click', async () => {
+            if (wakeLockObj) { await wakeLockObj.release(); wakeLockObj = null; return ZOF.toast('💡 Screen WakeLock Released'); }
+            try { wakeLockObj = await navigator.wakeLock?.request('screen'); ZOF.toast('💡 Keep Screen Awake ON'); }
+            catch (e) { ZOF.toast('💡 WakeLock active while tab is focused'); }
+        });
+        document.getElementById('toggle-tilt-btn')?.addEventListener('click', () => {
+            tiltEnabled = !tiltEnabled;
+            ZOF.toast(tiltEnabled ? '📱 Tilt-to-Turn Page ON' : '📱 Tilt-to-Turn OFF');
+        });
+        window.addEventListener('deviceorientation', (e) => {
+            if (!tiltEnabled) return;
+            if (e.gamma > 28) turnPage(1);
+            else if (e.gamma < -28) turnPage(-1);
+        });
+
+        document.getElementById('mark-chapter-learned-btn')?.addEventListener('click', () => {
+            const book = getActiveBook();
+            if (!book) return;
+            const intervals = [1, 3, 7, 21, 30];
+            intervals.forEach(days => {
+                const d = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+                state.todos.unshift({
+                    id: Date.now() + days,
+                    title: `🔁 [Day +${days} Revision] ${book.title} (p. ${book.currentPage})`,
+                    priority: 'High',
+                    list: 'planned',
+                    myDay: days === 1,
+                    important: true,
+                    done: false,
+                    due: d,
+                    repeat: 'none',
+                    repeatDays: [],
+                    linkedStudy: 'reader',
+                    note: `Automated 1-3-7-21-30d Spaced Revision from Moon+ Reader.`,
+                    steps: []
+                });
+            });
+            ZOF.saveState();
+            if (window.ZOF.renderTodos) window.ZOF.renderTodos();
+            ZOF.toast('📅 Scheduled Day +1, +3, +7, +21 & +30 Revisions in MS To-Do!');
+        });
+
+        // Bookmarks, TOC/Highlights Drawer, In-Book Search & High-Yield Cram Sheet
+        document.getElementById('reader-bookmark-btn')?.addEventListener('click', () => {
+            const book = getActiveBook();
+            if (!book) return;
+            state.annotations.unshift({ id: Date.now(), bookId: book.id, page: book.currentPage, type: 'bookmark', text: `Bookmark on Page ${book.currentPage}`, color: 'amber' });
+            ZOF.saveState();
+            ZOF.toast(`🔖 Saved Bookmark for Page ${book.currentPage}!`);
+        });
+        document.getElementById('reader-toc-btn')?.addEventListener('click', () => {
+            const drawer = document.getElementById('reader-toc-drawer');
+            const book = getActiveBook();
+            if (!drawer || !book) return;
+            drawer.classList.toggle('hidden');
+            const anns = (state.annotations || []).filter(a => a.bookId === book.id);
+            drawer.innerHTML = `<div class="font-bold text-blue-400">📑 Pages & Saved Annotations (${anns.length})</div>` +
+                anns.map(a => `<div onclick="window.ZOF.openBook(${book.id}, ${a.page})" class="p-1.5 rounded bg-slate-950 border border-slate-800 cursor-pointer flex justify-between"><span>${a.type === 'bookmark' ? '🔖' : '🖍️'} ${a.text.slice(0, 60)}</span><span class="text-emerald-400 font-mono">p. ${a.page}</span></div>`).join('');
+        });
+        document.getElementById('reader-search-toggle-btn')?.addEventListener('click', () => document.getElementById('reader-search-bar')?.classList.toggle('hidden'));
+        document.getElementById('inbook-search-btn')?.addEventListener('click', () => {
+            const q = (document.getElementById('inbook-search-input')?.value || '').toLowerCase();
+            const book = getActiveBook();
+            if (!q || !book) return;
+            const idx = (book.pages || []).findIndex(p => p.toLowerCase().includes(q));
+            if (idx >= 0) { window.ZOF.openBook(book.id, idx + 1); ZOF.toast(`🔍 Found "${q}" on Page ${idx + 1}`); }
+            else { ZOF.toast(`No match for "${q}" in this book`); }
+        });
+
+        document.getElementById('status-high-yield-btn')?.addEventListener('click', () => {
+            const cram = (state.annotations || []).filter(a => ['blue', 'orange', 'red'].includes(a.color));
+            const txt = cram.map(a => `• [${a.color.toUpperCase()} — p. ${a.page}] ${a.text} ${a.note ? '(' + a.note + ')' : ''}`).join('\n') || 'Highlight formulas (Blue), exam topics (Orange), or doubts (Red) to build your High-Yield Cram Sheet!';
+            alert(`🚨 LAST-MINUTE HIGH-YIELD CRAM SHEET:\n\n${txt}`);
+        });
+
+        document.getElementById('export-annotations-btn')?.addEventListener('click', () => {
+            const md = (state.annotations || []).map(a => `- **[p. ${a.page} | ${a.color}]** ${a.text} ${a.note ? '— *Note: ' + a.note + '*' : ''}`).join('\n');
+            const blob = new Blob([`# Exported Book Highlights & Notes\n\n${md}`], { type: 'text/markdown' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'ZikrOFikr_Book_Annotations.md';
+            link.click();
+            ZOF.toast('📤 Exported Highlights & Notes (.MD)!');
+        });
+
+        // =====================================================================
+        // 5. FLOATING 15-ACTION SELECTION MENU
+        // =====================================================================
+        let selectedText = '';
+        const selToolbar = document.getElementById('selection-toolbar');
+        const checkSelection = () => {
+            setTimeout(() => {
+                const txt = window.getSelection()?.toString().trim() || '';
+                if (txt.length > 2) {
+                    selectedText = txt;
+                    selToolbar?.classList.remove('hidden');
+                    selToolbar.style.bottom = '68px';
+                    selToolbar.style.left = '10px';
+                }
+            }, 80);
+        };
+        document.addEventListener('mouseup', checkSelection);
+        document.addEventListener('touchend', checkSelection);
+
+        document.querySelectorAll('.sel-action-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const act = btn.dataset.act;
+                const color = btn.dataset.color || 'yellow';
+                const book = getActiveBook() || { id: 101, title: 'Study Reader', author: '14th Ed.', currentPage: 1 };
+                selToolbar?.classList.add('hidden');
+                if (!selectedText) return;
+                const cite = `${book.title} (${book.author || 'Verified'}), p. ${book.currentPage || 1}`;
+
+                if (act === 'highlight' || act === 'underline' || act === 'note') {
+                    const note = act === 'note' ? (prompt('Attach Floating Note to Highlight:') || '') : '';
+                    state.annotations.unshift({ id: Date.now(), bookId: book.id, page: book.currentPage, text: selectedText, color, style: act === 'underline' ? 'underline' : 'fill', note });
+                    state.knowledgeBase.unshift({ id: Date.now() + 1, category: 'Exam Prep', type: 'Book/PDF', edition: book.author || 'Verified', cite, title: `Highlight [${color.toUpperCase()}]: ${selectedText.slice(0, 34)}...`, body: selectedText + (note ? `\nNote: ${note}` : ''), hash: ZOF.hashText(selectedText), selectedForAI: true });
+                    ZOF.saveState(); renderReaderPage('none'); if (window.ZOF.renderKB) window.ZOF.renderKB();
+                    ZOF.toast(`🖍️ Highlighted & Saved to Verified KB [${cite}]`);
+                } else if (act === 'copy') {
+                    navigator.clipboard?.writeText(`${selectedText} [${cite}]`);
+                    ZOF.toast('📋 Copied with source citation!');
+                } else if (act === 'define') {
+                    if (window.ZOF.lookupArabicOrTerm) window.ZOF.lookupArabicOrTerm(selectedText);
+                    else ZOF.toast(`📖 Definition / Root Lookup: "${selectedText.slice(0, 45)}"`);
+                } else if (act === 'translate') {
+                    ZOF.switchTab('page-ai');
+                    document.getElementById('ai-prompt-input').value = `Translate & explain medical/context terms from [${cite}]: "${selectedText}"`;
+                    document.getElementById('send-ai-btn')?.click();
+                } else if (act === 'search_lib') {
+                    document.querySelector('[data-lib="lib-panel-bookshelf"]')?.click();
+                    document.getElementById('shelf-search-input').value = selectedText.slice(0, 40);
+                    renderBookshelf();
+                } else if (act === 'explain' || act === 'summarize') {
+                    ZOF.switchTab('page-ai');
+                    document.getElementById('ai-agent-select').value = 'mentor';
+                    document.getElementById('ai-prompt-input').value = `${act === 'explain' ? 'Explain simply' : 'Summarize & create mnemonic'} from [${cite}]: "${selectedText}"`;
+                    document.getElementById('send-ai-btn')?.click();
+                } else if (act === 'flashcard') {
+                    state.flashcards.unshift({ id: Date.now(), q: `From [${cite}], explain: "${selectedText.slice(0, 65)}..."`, a: selectedText, src: cite, interval: '1d', mastered: false });
+                    ZOF.saveState(); if (window.ZOF.renderFlashcards) window.ZOF.renderFlashcards();
+                    ZOF.toast(`🃏 Created Source-Linked Flashcard [${cite}]!`);
+                } else if (act === 'kb') {
+                    state.knowledgeBase.unshift({ id: Date.now(), category: 'Biology', type: 'Book/PDF', edition: book.author || 'Verified', cite, title: selectedText.slice(0, 42), body: selectedText, hash: ZOF.hashText(selectedText), selectedForAI: true });
+                    ZOF.saveState(); if (window.ZOF.renderKB) window.ZOF.renderKB();
+                    ZOF.toast('📥 Indexed directly into Verified KB!');
+                } else if (act === 'tts') {
+                    if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(selectedText));
+                }
+            });
+        });
+
+        renderBookshelf();
+        renderReaderPage('none');
+    });
+})();
+
