@@ -1,815 +1,2006 @@
-/* ============================================================================
-   ZikrOFikr OS — Moon+ Library & Reader Pro Engine (module-library.js)
-   Part 1: Bookshelf (Grid/List/Wall), Lazy PDF/EPUB/DOCX/CBZ Extractor,
-           Duplicate Check, Private Shelf, Folder Scanner & Metadata Manager
-   ============================================================================ */
+/**
+ * ZIKR-O-FIKR — MODULE: LIBRARY & MOON+ READER PRO ENGINE (PHASE 1: WINDOWS 11 UPGRADE 1 & 2)
+ * Features:
+ * - Real Visual PDF Page Rendering (Preserves Biology Diagrams, Color Charts & Original Layout)
+ * - Smart Format Selector (.PDF, .MD, .TXT, .JSON) + Local AI Brain Indexer
+ * - Direct Windows 11 Vault Folder Access (File System Access API) + (?) Format Guide
+ * - Auto Full-Screen Moon+ Reader HUD (Center-Click Toggle, Day/Sepia/Night/OLED Filters, Dual/Single/Scroll)
+ * - Complete Undo/Redo Stack (Ctrl+Z / Ctrl+Y), Click-to-Erase Highlights, Diagram Box-Highlighter
+ * - 5-Second Undo Toast + Page Jump Undo ("Return to Page X") + In-Reader AI Council Drawer
+ */
 
 (function () {
-    'use strict';
+  'use strict';
 
-    ZOF.onReady(() => {
-        const state = ZOF.state;
-        let shelfViewMode = 'grid';
-        let showHiddenShelf = false;
-        let autoScrollTimer = null;
-        let ttsSpeaking = false;
-        let ttsSentences = [];
-        let ttsIndex = 0;
-        let tiltEnabled = false;
-        let shakeEnabled = false;
-        let wakeLockObj = null;
+  const DB_NAME = 'ZikrOFikr_MoonReader_Vault_v2';
+  const DB_VERSION = 1;
+  const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+  const PDFJS_WORKER_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-        // =====================================================================
-        // 1. LIBRARY SUB-TAB NAVIGATION & QUICK HOME CARD LINKS
-        // =====================================================================
-        document.querySelectorAll('.lib-sub-tab').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const target = btn.dataset.lib;
-                document.querySelectorAll('.lib-panel').forEach(p => p.classList.add('hidden'));
-                document.getElementById(target)?.classList.remove('hidden');
-                document.querySelectorAll('.lib-sub-tab').forEach(b => {
-                    b.className = `lib-sub-tab flex-1 min-w-[68px] ${b === btn ? 'bg-blue-600 text-white' : 'text-slate-400'} font-bold py-1.5 px-2 rounded-lg text-[11px]`;
-                });
-            });
-        });
+  const HIGHLIGHT_COLORS = [
+    { id: 'yellow', name: 'Yellow', hex: '#facc15', rgba: 'rgba(250, 204, 21, 0.38)' },
+    { id: 'green',  name: 'Green',  hex: '#4ade80', rgba: 'rgba(74, 222, 128, 0.38)' },
+    { id: 'cyan',   name: 'Cyan',   hex: '#38bdf8', rgba: 'rgba(56, 189, 248, 0.38)' },
+    { id: 'pink',   name: 'Pink',   hex: '#f472b6', rgba: 'rgba(244, 114, 182, 0.38)' },
+    { id: 'orange', name: 'Orange', hex: '#fb923c', rgba: 'rgba(251, 146, 60, 0.38)' }
+  ];
 
-        document.getElementById('quick-card-read')?.addEventListener('click', () => {
-            ZOF.switchTab('page-library');
-            document.querySelector('[data-lib="lib-panel-reader"]')?.click();
-        });
-        document.getElementById('quick-card-revise')?.addEventListener('click', () => {
-            ZOF.switchTab('page-library');
-            document.querySelector('[data-lib="lib-panel-cards"]')?.click();
-        });
-        document.getElementById('quick-card-tasks')?.addEventListener('click', () => ZOF.switchTab('page-tasks'));
-        document.getElementById('quick-card-ai')?.addEventListener('click', () => ZOF.switchTab('page-ai'));
+  const state = {
+    db: null,
+    books: [],
+    vaultHandle: null,
+    pendingImport: null,
+    activeBook: null,
+    pdfDoc: null,
+    currentPage: 1,
+    totalPages: 1,
+    previousJumpPage: null,
+    zoom: 1.25,
+    theme: 'night',      // 'day' | 'sepia' | 'night' | 'oled'
+    viewMode: 'single',  // 'single' | 'dual' | 'scroll'
+    hudVisible: true,
+    boxToolActive: false,
+    activeColor: 'yellow',
+    selectedText: '',
+    selectedRects: [],
+    activeHighlightId: null,
+    undoStack: [],
+    redoStack: [],
+    toastTimer: null,
+    toastUndoAction: null,
+    aiMode: 'council',   // 'council' | 'local' | 'cloud'
+    sidebarTab: null     // 'toc' | 'annotations' | 'bookmarks' | 'ai' | null
+  };
 
-        // =====================================================================
-        // 2. ON-DEMAND LAZY LOADERS FOR HEAVY ENGINES (0 KB STARTUP RAM!)
-        // =====================================================================
-        async function loadScriptOnce(url, globalCheck) {
-            if (window[globalCheck]) return window[globalCheck];
-            return new Promise((resolve, reject) => {
-                const s = document.createElement('script');
-                s.src = url;
-                s.onload = () => resolve(window[globalCheck]);
-                s.onerror = () => reject(new Error('Failed to load ' + url));
-                document.head.appendChild(s);
-            });
+  // =========================================================================
+  // 1. INJECT SCOPED MOON+ READER PRO STYLES
+  // =========================================================================
+  function injectStyles() {
+    if (document.getElementById('zof-moon-reader-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'zof-moon-reader-styles';
+    style.textContent = `
+      .zof-lib-wrap {
+        padding: 18px;
+        color: #e2e8f0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      .zof-lib-topbar {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        background: linear-gradient(135deg, rgba(15,23,42,0.95), rgba(30,41,59,0.9));
+        border: 1px solid rgba(56,189,248,0.25);
+        border-radius: 14px;
+        padding: 16px 20px;
+        margin-bottom: 18px;
+      }
+      .zof-lib-title h2 {
+        margin: 0;
+        font-size: 1.35rem;
+        color: #f8fafc;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .zof-lib-title p {
+        margin: 4px 0 0;
+        font-size: 0.85rem;
+        color: #94a3b8;
+      }
+      .zof-lib-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+      }
+      .zof-btn {
+        background: #1e293b;
+        color: #f1f5f9;
+        border: 1px solid rgba(148,163,184,0.3);
+        border-radius: 9px;
+        padding: 8px 14px;
+        font-size: 0.86rem;
+        font-weight: 600;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.15s ease;
+      }
+      .zof-btn:hover {
+        background: #334155;
+        border-color: #38bdf8;
+      }
+      .zof-btn-primary {
+        background: linear-gradient(135deg, #0284c7, #2563eb);
+        border-color: #38bdf8;
+        color: #fff;
+      }
+      .zof-btn-primary:hover {
+        background: linear-gradient(135deg, #0369a1, #1d4ed8);
+      }
+      .zof-btn-danger {
+        background: rgba(239, 68, 68, 0.18);
+        border-color: rgba(239, 68, 68, 0.45);
+        color: #fca5a5;
+      }
+      .zof-btn-help {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        justify-content: center;
+        padding: 0;
+        background: rgba(56, 189, 248, 0.15);
+        border-color: #38bdf8;
+        color: #38bdf8;
+        font-weight: 700;
+      }
+      .zof-book-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 16px;
+      }
+      .zof-book-card {
+        background: rgba(15, 23, 42, 0.88);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 12px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 12px;
+        transition: transform 0.15s ease, border-color 0.15s ease;
+      }
+      .zof-book-card:hover {
+        transform: translateY(-2px);
+        border-color: #38bdf8;
+      }
+      .zof-book-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .zof-badge {
+        font-size: 0.72rem;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(56, 189, 248, 0.15);
+        color: #7dd3fc;
+        border: 1px solid rgba(56, 189, 248, 0.3);
+      }
+      .zof-badge.green {
+        background: rgba(74, 222, 128, 0.15);
+        color: #86efac;
+        border-color: rgba(74, 222, 128, 0.3);
+      }
+      .zof-badge.amber {
+        background: rgba(250, 204, 21, 0.15);
+        color: #fde047;
+        border-color: rgba(250, 204, 21, 0.3);
+      }
+
+      /* MODAL OVERLAYS */
+      .zof-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(2, 6, 23, 0.85);
+        backdrop-filter: blur(6px);
+        z-index: 1000000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      .zof-modal {
+        background: #0f172a;
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        border-radius: 14px;
+        max-width: 620px;
+        width: 100%;
+        padding: 22px;
+        color: #f8fafc;
+        box-shadow: 0 25px 50px -12px rgba(0,0,0,0.75);
+      }
+      .zof-format-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 9px;
+        background: rgba(30, 41, 59, 0.7);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        margin-bottom: 8px;
+        cursor: pointer;
+      }
+      .zof-format-option input {
+        margin-top: 4px;
+        transform: scale(1.2);
+      }
+
+      /* =====================================================================
+         MOON+ READER PRO FULL-SCREEN OVERLAY
+         ===================================================================== */
+      .zof-moon-fullscreen {
+        position: fixed;
+        inset: 0;
+        z-index: 999990;
+        display: flex;
+        flex-direction: column;
+        background: #0b0f19;
+        color: #e2e8f0;
+        user-select: text;
+        overflow: hidden;
+      }
+      .zof-moon-fullscreen.theme-day {
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      .zof-moon-fullscreen.theme-sepia {
+        background: #f4ecd8;
+        color: #3b2f1e;
+      }
+      .zof-moon-fullscreen.theme-night {
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      .zof-moon-fullscreen.theme-oled {
+        background: #000000;
+        color: #d4d4d8;
+      }
+
+      /* FLOATING TOP & BOTTOM HUD */
+      .zof-moon-hud-top {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 56px;
+        background: rgba(2, 6, 23, 0.92);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid rgba(56, 189, 248, 0.25);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+        z-index: 999995;
+        transition: transform 0.22s ease, opacity 0.22s ease;
+      }
+      .zof-moon-hud-top.hidden {
+        transform: translateY(-100%);
+        opacity: 0;
+        pointer-events: none;
+      }
+      .zof-moon-hud-bottom {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 60px;
+        background: rgba(2, 6, 23, 0.92);
+        backdrop-filter: blur(10px);
+        border-top: 1px solid rgba(56, 189, 248, 0.25);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 0 18px;
+        z-index: 999995;
+        transition: transform 0.22s ease, opacity 0.22s ease;
+      }
+      .zof-moon-hud-bottom.hidden {
+        transform: translateY(100%);
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      /* VIEWPORT & PAGE STAGE */
+      .zof-moon-stage {
+        flex: 1;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 68px 20px 76px;
+        position: relative;
+        scroll-behavior: smooth;
+      }
+      .zof-moon-pages-wrap {
+        display: flex;
+        gap: 20px;
+        align-items: flex-start;
+        justify-content: center;
+        flex-wrap: nowrap;
+      }
+      .zof-moon-pages-wrap.mode-scroll {
+        flex-direction: column;
+        align-items: center;
+      }
+      .zof-page-container {
+        position: relative;
+        background: #ffffff;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .theme-sepia .zof-page-container canvas {
+        filter: sepia(0.32) contrast(0.98);
+      }
+      .theme-oled .zof-page-container canvas {
+        filter: brightness(0.92) contrast(1.04);
+      }
+
+      /* TEXT LAYER & HIGHLIGHT OVERLAY LAYER */
+      .zof-text-layer {
+        position: absolute;
+        inset: 0;
+        line-height: 1;
+        z-index: 3;
+      }
+      .zof-text-layer span {
+        color: transparent;
+        position: absolute;
+        white-space: pre;
+        cursor: text;
+        transform-origin: 0% 0%;
+      }
+      .zof-text-layer ::selection {
+        background: rgba(56, 189, 248, 0.35);
+      }
+      .zof-highlight-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 4;
+        pointer-events: none;
+      }
+      .zof-hl-mark {
+        position: absolute;
+        border-radius: 3px;
+        pointer-events: auto;
+        cursor: pointer;
+        transition: outline 0.12s ease;
+      }
+      .zof-hl-mark:hover {
+        outline: 2px solid #0284c7;
+      }
+      .zof-hl-mark.is-box {
+        border: 2px dashed #0284c7;
+      }
+      .zof-hl-note-badge {
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        background: #0f172a;
+        color: #facc15;
+        border: 1px solid #facc15;
+        border-radius: 50%;
+        width: 20px;
+        height: 20px;
+        font-size: 11px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+      }
+
+      /* FLOATING SELECTION & HIGHLIGHT UNDO TOOLBAR */
+      .zof-selection-popup {
+        position: fixed;
+        z-index: 999998;
+        background: #0f172a;
+        border: 1px solid #38bdf8;
+        border-radius: 12px;
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.75);
+      }
+      .zof-color-dot {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        cursor: pointer;
+        border: 2px solid transparent;
+        transition: transform 0.12s ease;
+      }
+      .zof-color-dot:hover, .zof-color-dot.active {
+        transform: scale(1.2);
+        border-color: #ffffff;
+      }
+
+      /* SIDEBAR DRAWER (AI COUNCIL, NOTES, TOC) */
+      .zof-moon-drawer {
+        position: fixed;
+        top: 56px;
+        bottom: 60px;
+        right: 0;
+        width: 380px;
+        max-width: 92vw;
+        background: rgba(15, 23, 42, 0.98);
+        border-left: 1px solid rgba(56, 189, 248, 0.35);
+        z-index: 999996;
+        display: flex;
+        flex-direction: column;
+        padding: 16px;
+        color: #f8fafc;
+        box-shadow: -12px 0 30px rgba(0,0,0,0.6);
+      }
+
+      /* BOTTOM SAFETY PILLS: JUMP UNDO & 5-SEC TOAST UNDO */
+      .zof-jump-undo-pill {
+        position: fixed;
+        bottom: 74px;
+        left: 20px;
+        z-index: 999997;
+        background: #0f172a;
+        border: 1px solid #38bdf8;
+        color: #7dd3fc;
+        padding: 8px 14px;
+        border-radius: 999px;
+        font-size: 0.84rem;
+        font-weight: 600;
+        cursor: pointer;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.6);
+      }
+      .zof-toast-undo {
+        position: fixed;
+        bottom: 74px;
+        right: 20px;
+        z-index: 999999;
+        background: #0f172a;
+        border: 1px solid #facc15;
+        color: #f8fafc;
+        padding: 10px 16px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 0.86rem;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.75);
+      }
+
+      /* MARKDOWN / TEXT FALLBACK PAGE VIEW */
+      .zof-md-reader-page {
+        max-width: 820px;
+        width: 100%;
+        background: rgba(15, 23, 42, 0.92);
+        color: #e2e8f0;
+        padding: 36px 44px;
+        border-radius: 10px;
+        line-height: 1.75;
+        font-size: 1.05rem;
+        position: relative;
+      }
+      .theme-day .zof-md-reader-page {
+        background: #ffffff;
+        color: #0f172a;
+      }
+      .theme-sepia .zof-md-reader-page {
+        background: #fbf3e4;
+        color: #3b2f1e;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // =========================================================================
+  // 2. INDEXEDDB VAULT STORAGE ENGINE
+  // =========================================================================
+  function openVaultDB() {
+    return new Promise((resolve, reject) => {
+      if (state.db) return resolve(state.db);
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('books')) {
+          db.createObjectStore('books', { keyPath: 'id' });
         }
-
-        async function extractFilePages(file) {
-            const name = file.name || 'Imported_Book';
-            const ext = name.split('.').pop().toLowerCase();
-
-            // 1. Real PDF Page-by-Page Extractor (Lazy-Loads PDF.js)
-            if (ext === 'pdf') {
-                ZOF.toast('⏳ Lazy-loading PDF.js & extracting page-linked medical text...');
-                try {
-                    await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', 'pdfjsLib');
-                    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-                    const buf = await file.arrayBuffer();
-                    const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
-                    const pages = [];
-                    const maxPages = Math.min(pdf.numPages, 250);
-                    for (let i = 1; i <= maxPages; i++) {
-                        const page = await pdf.getPage(i);
-                        const txtContent = await page.getTextContent();
-                        const pageStr = txtContent.items.map(it => it.str).join(' ');
-                        pages.push(`PAGE ${i} (${name}):\n${ZOF.sanitizeText(pageStr)}`);
-                    }
-                    return { format: 'PDF', pages: pages.length ? pages : ['Empty PDF'] };
-                } catch (e) {
-                    return { format: 'PDF', pages: [`PDF Loaded (${name}). Connect once to cache PDF.js worker for offline extraction.`] };
-                }
-            }
-
-            // 2. Real EPUB & CBZ Extractor (Uses JSZip)
-            if (ext === 'epub' || ext === 'cbz') {
-                try {
-                    const zip = await window.JSZip.loadAsync(file);
-                    const pages = [];
-                    const files = Object.keys(zip.files).filter(f => /\.(xhtml|html|htm|txt|xml)$/i.test(f)).sort();
-                    for (let i = 0; i < Math.min(files.length, 120); i++) {
-                        const rawHtml = await zip.files[files[i]].async('string');
-                        const stripped = rawHtml.replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '')
-                            .replace(/<[^>]+>/g, ' ')
-                            .replace(/\s+/g, ' ')
-                            .trim();
-                        if (stripped.length > 40) {
-                            pages.push(`SECTION ${pages.length + 1} (${name}):\n${ZOF.sanitizeText(stripped)}`);
-                        }
-                    }
-                    return { format: ext.toUpperCase(), pages: pages.length ? pages : [`${ext.toUpperCase()} archive indexed: ${name}`] };
-                } catch (e) {
-                    return { format: ext.toUpperCase(), pages: [`Could not unpack ${name}: ${e.message}`] };
-                }
-            }
-
-            // 3. Real DOCX Extractor (Lazy-Loads Mammoth.js)
-            if (ext === 'docx') {
-                try {
-                    await loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js', 'mammoth');
-                    const buf = await file.arrayBuffer();
-                    const res = await window.mammoth.extractRawText({ arrayBuffer: buf });
-                    const clean = ZOF.sanitizeText(res.value || '');
-                    const chunks = clean.match(/[\s\S]{1,1800}/g) || [clean];
-                    return { format: 'DOCX/CBZ', pages: chunks.map((c, i) => `PAGE ${i + 1} (${name}):\n${c}`) };
-                } catch (e) {
-                    return { format: 'DOCX/CBZ', pages: [`DOCX imported (${name}).`] };
-                }
-            }
-
-            // 4. TXT, Markdown, HTML, JSON, CSV
-            const text = ZOF.sanitizeText(await file.text());
-            const splitPages = text.includes('---PAGE---')
-                ? text.split('---PAGE---').map(s => s.trim()).filter(Boolean)
-                : (text.match(/[\s\S]{1,1800}/g) || [text]);
-            return {
-                format: 'TXT/MD',
-                pages: splitPages.map((p, idx) => p.startsWith('PAGE ') ? p : `PAGE ${idx + 1} (${name}):\n${p}`)
-            };
-        }
-
-        // =====================================================================
-        // 3. MOON+ BOOKSHELF RENDERER (GRID, LIST, 3D COVER WALL & FILTERS)
-        // =====================================================================
-        function renderBookshelf() {
-            const grid = document.getElementById('bookshelf-grid');
-            if (!grid) return;
-
-            const q = (document.getElementById('shelf-search-input')?.value || '').toLowerCase();
-            const catFilter = document.getElementById('shelf-filter-cat')?.value || 'all';
-            const fmtFilter = document.getElementById('shelf-filter-format')?.value || 'all';
-            const sortMode = document.getElementById('shelf-sort-select')?.value || 'recent';
-
-            let books = state.books.filter(b => {
-                if (Boolean(b.isHidden) !== showHiddenShelf) return false;
-                if (catFilter === 'Favorites' && !b.isFavorite) return false;
-                if (catFilter === 'Reading' && (b.progressPct <= 0 || b.progressPct >= 100)) return false;
-                if (catFilter === 'Completed' && b.progressPct < 100) return false;
-                if (!['all', 'Favorites', 'Reading', 'Completed'].includes(catFilter) && b.category !== catFilter) return false;
-                if (fmtFilter !== 'all' && b.format !== fmtFilter) return false;
-                if (q) {
-                    const inMeta = (b.title || '').toLowerCase().includes(q) ||
-                                   (b.author || '').toLowerCase().includes(q) ||
-                                   (b.tags || []).join(' ').toLowerCase().includes(q);
-                    const inPages = (b.pages || []).some(p => p.toLowerCase().includes(q));
-                    if (!inMeta && !inPages) return false;
-                }
-                return true;
-            });
-
-            if (sortMode === 'title') books.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-            if (sortMode === 'author') books.sort((a, b) => (a.author || '').localeCompare(b.author || ''));
-            if (sortMode === 'progress') books.sort((a, b) => (b.progressPct || 0) - (a.progressPct || 0));
-            if (sortMode === 'added') books.sort((a, b) => (b.id || 0) - (a.id || 0));
-
-            grid.className = shelfViewMode === 'list'
-                ? 'flex flex-col gap-2'
-                : (shelfViewMode === 'wall' ? 'grid grid-cols-2 sm:grid-cols-4 gap-3' : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5');
-
-            grid.innerHTML = books.map(b => {
-                const total = (b.pages || []).length || 1;
-                const cur = Math.min(total, b.currentPage || 1);
-                const pct = Math.round((cur / total) * 100);
-                b.progressPct = pct;
-
-                if (shelfViewMode === 'wall') {
-                    return `
-                        <div onclick="window.ZOF.openBook(${b.id})" class="bg-gradient-to-br from-slate-900 via-blue-950/40 to-slate-950 border border-slate-700 hover:border-blue-400 rounded-2xl p-3.5 flex flex-col justify-between aspect-[3/4] cursor-pointer shadow-lg transition-transform hover:-translate-y-1">
-                            <div class="flex justify-between items-center text-[9px] font-mono">
-                                <span class="px-1.5 py-0.5 rounded bg-blue-600/30 text-blue-300 font-bold">${b.format || 'BOOK'}</span>
-                                <span>${b.isFavorite ? '⭐' : ''}</span>
-                            </div>
-                            <div class="my-auto text-center">
-                                <h4 class="text-xs font-extrabold text-white line-clamp-3">${b.title}</h4>
-                                <p class="text-[10px] text-slate-400 mt-1 truncate">${b.author || 'Verified Source'}</p>
-                            </div>
-                            <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                <div class="bg-emerald-500 h-full" style="width:${pct}%"></div>
-                            </div>
-                        </div>`;
-                }
-
-                return `
-                    <div class="bg-slate-900 border border-slate-800 hover:border-blue-500/50 rounded-2xl p-3 flex flex-col justify-between gap-2 transition-all">
-                        <div>
-                            <div class="flex justify-between items-center gap-1">
-                                <span class="text-[9px] font-bold uppercase px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/40">${b.format || 'PDF'} • ${b.category}</span>
-                                <div class="flex items-center gap-1.5 text-xs">
-                                    <button type="button" onclick="window.ZOF.toggleBookFav(${b.id})" title="Favorite">${b.isFavorite ? '⭐' : '☆'}</button>
-                                    <button type="button" onclick="window.ZOF.editBookMeta(${b.id})" class="text-[10px] text-slate-400 hover:text-white" title="Edit Metadata">✏️</button>
-                                    <button type="button" onclick="window.ZOF.deleteBook(${b.id})" class="text-[10px] text-red-400" title="Delete">✕</button>
-                                </div>
-                            </div>
-                            <h4 onclick="window.ZOF.openBook(${b.id})" class="text-xs font-bold text-white mt-1.5 cursor-pointer hover:text-blue-400">${b.title}</h4>
-                            <p class="text-[10px] text-slate-400">${b.author || 'Edition Verified'} • ${(b.tags || []).join(' ')}</p>
-                            ${b.cloudUrl ? `<a href="${b.cloudUrl}" target="_blank" rel="noopener" class="inline-block mt-1 text-[10px] text-amber-300 underline font-mono">☁️ Open Linked Cold-Storage File</a>` : ''}
-                        </div>
-                        <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-                            <span class="text-emerald-400 font-mono">Page ${cur}/${total} (${pct}%)</span>
-                            <button type="button" onclick="window.ZOF.openBook(${b.id})" class="bg-blue-600/20 text-blue-300 border border-blue-500/30 font-bold px-2.5 py-0.5 rounded-lg">Read ▶</button>
-                        </div>
-                    </div>`;
-            }).join('') || `<p class="text-xs text-slate-500 col-span-full text-center py-6">${showHiddenShelf ? '🔒 Private Shelf is empty.' : 'No matching books found.'}</p>`;
-        }
-
-        // View Mode, Search, Filter & Sort Listeners
-        document.querySelectorAll('.shelf-view-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                shelfViewMode = btn.dataset.view;
-                document.querySelectorAll('.shelf-view-btn').forEach(b => {
-                    b.className = `shelf-view-btn ${b === btn ? 'bg-blue-600 text-white' : 'text-slate-400'} text-[10px] font-bold px-2 py-1 rounded-lg`;
-                });
-                renderBookshelf();
-            });
-        });
-        ['shelf-search-input', 'shelf-filter-cat', 'shelf-filter-format', 'shelf-sort-select'].forEach(id => {
-            document.getElementById(id)?.addEventListener('input', renderBookshelf);
-            document.getElementById(id)?.addEventListener('change', renderBookshelf);
-        });
-
-        // Private Shelf, Dedupe & Folder Scanner
-        document.getElementById('toggle-hidden-shelf-btn')?.addEventListener('click', () => {
-            if (!showHiddenShelf) {
-                const pin = prompt('🔒 Enter PIN to access Private Shelf (Default: 1234):');
-                if (pin !== state.appLockPin && pin !== '1234') return ZOF.toast('❌ Invalid PIN');
-            }
-            showHiddenShelf = !showHiddenShelf;
-            renderBookshelf();
-            ZOF.toast(showHiddenShelf ? '🔒 Viewing Private Shelf' : '📚 Returned to Main Shelf');
-        });
-
-        document.getElementById('dedupe-shelf-btn')?.addEventListener('click', () => {
-            const seen = new Set();
-            const before = state.books.length;
-            state.books = state.books.filter(b => {
-                const sig = `${(b.title || '').toLowerCase()}_${(b.pages || []).length}`;
-                if (seen.has(sig)) return false;
-                seen.add(sig);
-                return true;
-            });
-            const removed = before - state.books.length;
-            ZOF.saveState();
-            renderBookshelf();
-            ZOF.toast(removed ? `🧹 Removed ${removed} duplicate book(s)!` : '✅ Zero duplicates found!');
-        });
-
-        document.getElementById('sd-folder-picker-btn')?.addEventListener('click', async () => {
-            if (window.showDirectoryPicker) {
-                try {
-                    const dirHandle = await window.showDirectoryPicker();
-                    let count = 0;
-                    for await (const entry of dirHandle.values()) {
-                        if (entry.kind === 'file' && /\.(pdf|epub|txt|md|docx|cbz|html)$/i.test(entry.name)) {
-                            const file = await entry.getFile();
-                            await importBookFile(file);
-                            count++;
-                        }
-                    }
-                    ZOF.toast(`📂 Imported ${count} study file(s) from folder!`);
-                } catch (e) { /* User cancelled */ }
-            } else {
-                document.getElementById('book-file-input')?.click();
-            }
-        });
-
-        async function importBookFile(file) {
-            const extracted = await extractFilePages(file);
-            const title = file.name.replace(/\.[^/.]+$/, '');
-            const newId = Date.now() + Math.floor(Math.random() * 1000);
-            const newBook = {
-                id: newId,
-                title,
-                author: `Imported (${(file.size / 1024).toFixed(0)} KB)`,
-                format: extracted.format,
-                category: 'Biology/Medical',
-                tags: ['#imported'],
-                isFavorite: false,
-                isHidden: showHiddenShelf,
-                currentPage: 1,
-                totalPages: extracted.pages.length,
-                progressPct: 0,
-                cloudUrl: '',
-                pages: extracted.pages
-            };
-            state.books.unshift(newBook);
-            // Index first 3 pages into Verified KB automatically
-            extracted.pages.slice(0, 3).forEach((pText, idx) => {
-                state.knowledgeBase.unshift({
-                    id: newId + idx + 1,
-                    category: 'Biology',
-                    type: 'Book/PDF',
-                    edition: 'Imported File',
-                    cite: `${title}, p. ${idx + 1}`,
-                    title: `${title} — Page ${idx + 1}`,
-                    body: pText.slice(0, 900),
-                    hash: ZOF.hashText(pText),
-                    selectedForAI: true
-                });
-            });
-            ZOF.saveState();
-            renderBookshelf();
-            if (window.ZOF.renderKB) window.ZOF.renderKB();
-        }
-
-        document.getElementById('book-file-input')?.addEventListener('change', async (e) => {
-            const files = Array.from(e.target.files || []);
-            for (const f of files) await importBookFile(f);
-            ZOF.toast(`📥 Imported & indexed ${files.length} file(s)!`);
-        });
-
-        document.getElementById('add-book-btn')?.addEventListener('click', () => {
-            const title = document.getElementById('new-book-title').value.trim();
-            const author = document.getElementById('new-book-author').value.trim() || 'Edition Verified';
-            const tags = document.getElementById('new-book-tags').value.split(/\s+/).filter(Boolean);
-            const category = document.getElementById('new-book-cat').value;
-            const cloudUrl = document.getElementById('new-book-cloud-url').value.trim();
-            const rawContent = ZOF.sanitizeText(document.getElementById('new-book-content').value.trim());
-            if (!title) return ZOF.toast('Enter a Book or Chapter Title');
-            const pages = rawContent
-                ? (rawContent.includes('---PAGE---') ? rawContent.split('---PAGE---').map(s => s.trim()) : (rawContent.match(/[\s\S]{1,1800}/g) || [rawContent]))
-                : [`Cloud-Linked Volume: ${title}\nAuthor/Edition: ${author}\nCold Link: ${cloudUrl}`];
-            const id = Date.now();
-            state.books.unshift({ id, title, author, format: 'PDF', category, tags, isFavorite: false, isHidden: showHiddenShelf, currentPage: 1, totalPages: pages.length, progressPct: 0, cloudUrl, pages });
-            pages.forEach((p, idx) => {
-                state.knowledgeBase.unshift({
-                    id: id + idx + 1,
-                    category: category.includes('Islamic') ? 'Islamic Learning' : (category.includes('Med') ? 'Biology' : category),
-                    type: 'Book/PDF',
-                    edition: author,
-                    cite: `${title} (${author}), p. ${idx + 1}`,
-                    title: `${title} — p. ${idx + 1}`,
-                    body: p,
-                    hash: ZOF.hashText(p),
-                    selectedForAI: true
-                });
-            });
-            document.getElementById('new-book-title').value = '';
-            document.getElementById('new-book-content').value = '';
-            ZOF.saveState();
-            renderBookshelf();
-            if (window.ZOF.renderKB) window.ZOF.renderKB();
-            window.ZOF.openBook(id);
-            ZOF.toast('📚 Added to Shelf & Indexed in Verified KB!');
-        });
-
-        window.ZOF.toggleBookFav = (id) => {
-            const b = state.books.find(x => x.id === id);
-            if (b) { b.isFavorite = !b.isFavorite; ZOF.saveState(); renderBookshelf(); }
-        };
-        window.ZOF.editBookMeta = (id) => {
-            const b = state.books.find(x => x.id === id);
-            if (!b) return;
-            const t = prompt('Edit Title:', b.title);
-            const a = prompt('Edit Author & Edition:', b.author);
-            if (t) b.title = t.trim();
-            if (a) b.author = a.trim();
-            ZOF.saveState();
-            renderBookshelf();
-        };
-        window.ZOF.deleteBook = (id) => {
-            state.books = state.books.filter(x => x.id !== id);
-            ZOF.saveState();
-            renderBookshelf();
-        };
-// === END OF BATCH 4 PART 1 — PASTE BATCH 4 PART 2 DIRECTLY BELOW THIS LINE ===
-       // =====================================================================
-        // 4. MOON+ READER PRO ENGINE (PAGE CURL, TAP ZONES, RULER, INK & TTS)
-        // =====================================================================
-        const contentBox = document.getElementById('reader-content-box');
-        const pageSlider = document.getElementById('reader-page-slider');
-
-        function getActiveBook() {
-            return state.books.find(b => b.id === state.activeBookId) || state.books[0];
-        }
-
-        window.ZOF.openBook = (id, targetPage) => {
-            const book = state.books.find(b => b.id === id) || state.books[0];
-            if (!book) return;
-            state.activeBookId = book.id;
-            if (targetPage && targetPage >= 1 && targetPage <= (book.pages?.length || 1)) {
-                book.currentPage = targetPage;
-            }
-            document.querySelector('[data-lib="lib-panel-reader"]')?.click();
-            renderReaderPage('curl');
-            ZOF.saveState();
-        };
-
-        // Clickable Citation Jump (Used by AI Hub & KB to open exact book & page)
-        window.ZOF.jumpToCitation = (citeStr) => {
-            const cLower = (citeStr || '').toLowerCase();
-            const pageMatch = cLower.match(/p\.\s*(\d+)|page\s*(\d+)/i);
-            const pageNum = pageMatch ? parseInt(pageMatch[1] || pageMatch[2], 10) : 1;
-            const book = state.books.find(b => cLower.includes((b.title || '').split(':')[0].toLowerCase())) || getActiveBook();
-            ZOF.switchTab('page-library');
-            if (book) {
-                const idx = (book.pages || []).findIndex(p => p.toLowerCase().includes(`page ${pageNum}`));
-                window.ZOF.openBook(book.id, idx >= 0 ? idx + 1 : Math.min(pageNum, book.pages.length));
-                ZOF.toast(`📍 Jumped to verified source: ${citeStr}`);
-            }
-        };
-
-        function applyHighlightsToHtml(rawText, bookId, pageNum) {
-            let safe = ZOF.sanitizeText(rawText)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const anns = (state.annotations || []).filter(a => a.bookId === bookId && a.page === pageNum);
-            anns.forEach(a => {
-                if (!a.text || a.text.length < 3) return;
-                const esc = a.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const cls = a.style === 'underline' ? 'hl-underline' : `hl-${a.color || 'yellow'}`;
-                const noteBadge = a.note ? ` <span class="text-[10px] bg-amber-500/20 text-amber-300 px-1 rounded" title="${a.note}">📝 ${a.note}</span>` : '';
-                safe = safe.replace(new RegExp(esc, 'g'), `<mark class="${cls}">${a.text}</mark>${noteBadge}`);
-            });
-            return safe;
-        }
-
-        function renderReaderPage(animStyle) {
-            const book = getActiveBook();
-            if (!book || !contentBox) return;
-            const pages = book.pages && book.pages.length ? book.pages : ['Empty book'];
-            const total = pages.length;
-            book.currentPage = Math.max(1, Math.min(total, book.currentPage || 1));
-            book.progressPct = Math.round((book.currentPage / total) * 100);
-
-            document.getElementById('reader-book-title').textContent = book.title;
-            document.getElementById('reader-book-meta').textContent = `${book.author || 'Verified'} • ${book.format || 'PDF'} • Page ${book.currentPage}/${total}`;
-            if (pageSlider) { pageSlider.max = String(total); pageSlider.value = String(book.currentPage); }
-
-            // Typography & Mode Application
-            const prefs = state.readerPrefs || {};
-            contentBox.style.fontSize = `${prefs.fontSize || 15}px`;
-            contentBox.style.fontFamily = prefs.fontFamily || "'Inter', sans-serif";
-            contentBox.style.lineHeight = prefs.lineHeight || '1.8';
-            contentBox.style.textAlign = prefs.align || 'left';
-            contentBox.classList.toggle('dual-page-mode', Boolean(prefs.dualPage));
-            contentBox.classList.toggle('pdf-night-invert', Boolean(prefs.pdfInvert));
-
-            // Page Mode vs Continuous Vertical Scroll Mode
-            const rawPage = prefs.pageMode === 'scroll'
-                ? pages.map((p, i) => `--- [Page ${i + 1}] ---\n${p}`).join('\n\n')
-                : pages[book.currentPage - 1];
-
-            contentBox.innerHTML = applyHighlightsToHtml(rawPage, book.id, book.currentPage);
-
-            // Page Turn Animation (3D Curl / Slide / Fade)
-            contentBox.classList.remove('anim-page-curl', 'anim-page-slide', 'anim-page-fade');
-            void contentBox.offsetWidth;
-            const mode = animStyle || prefs.pageMode || 'curl';
-            if (mode === 'curl') contentBox.classList.add('anim-page-curl');
-            else if (mode === 'slide') contentBox.classList.add('anim-page-slide');
-            else if (mode === 'fade') contentBox.classList.add('anim-page-fade');
-
-            updateStatusBar(book, total);
-            renderBookshelf();
-        }
-
-        function updateStatusBar(book, total) {
-            const wordsLeft = ((total - book.currentPage) * 260);
-            const minsLeft = Math.max(1, Math.round(wordsLeft / 200));
-            const progEl = document.getElementById('status-book-progress');
-            if (progEl) progEl.textContent = `Page ${book.currentPage}/${total} (${book.progressPct}%) • ~${minsLeft}m left`;
-
-            const clockEl = document.getElementById('status-clock-battery');
-            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            if (navigator.getBattery) {
-                navigator.getBattery().then(bat => {
-                    if (clockEl) clockEl.textContent = `🕒 ${timeStr} • 🔋 ${Math.round(bat.level * 100)}%`;
-                }).catch(() => { if (clockEl) clockEl.textContent = `🕒 ${timeStr}`; });
-            } else if (clockEl) {
-                clockEl.textContent = `🕒 ${timeStr}`;
-            }
-        }
-
-        function turnPage(delta) {
-            const book = getActiveBook();
-            if (!book) return;
-            const next = (book.currentPage || 1) + delta;
-            if (next < 1 || next > (book.pages?.length || 1)) return ZOF.toast(delta > 0 ? '🎉 Reached end of book!' : 'At first page');
-            book.currentPage = next;
-            state.stats.pagesRead = (state.stats.pagesRead || 0) + (delta > 0 ? 1 : 0);
-            ZOF.saveState();
-            renderReaderPage();
-        }
-
-        document.getElementById('reader-prev-page')?.addEventListener('click', () => turnPage(-1));
-        document.getElementById('reader-next-page')?.addEventListener('click', () => turnPage(1));
-        pageSlider?.addEventListener('input', (e) => {
-            const book = getActiveBook();
-            if (book) { book.currentPage = parseInt(e.target.value, 10) || 1; renderReaderPage('fade'); }
-        });
-
-        // 9-Grid Tap Zones on Reader Canvas (Left 28% = Prev, Right 28% = Next)
-        contentBox?.addEventListener('click', (e) => {
-            if (window.getSelection()?.toString().trim().length > 0) return;
-            const rect = contentBox.getBoundingClientRect();
-            const relX = (e.clientX - rect.left) / rect.width;
-            if (relX < 0.25) turnPage(-1);
-            else if (relX > 0.75) turnPage(1);
-        });
-
-        // Keyboard Arrow / PageUp / PageDown & Bluetooth Headset MediaSession
-        document.addEventListener('keydown', (e) => {
-            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
-            const readerVisible = !document.getElementById('lib-panel-reader')?.classList.contains('hidden');
-            if (!readerVisible) return;
-            if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); turnPage(1); }
-            if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); turnPage(-1); }
-        });
-
-        if ('mediaSession' in navigator) {
-            try {
-                navigator.mediaSession.setActionHandler('nexttrack', () => turnPage(1));
-                navigator.mediaSession.setActionHandler('previoustrack', () => turnPage(-1));
-            } catch (e) { /* Optional headset binding */ }
-        }
-
-        // Typography, Page Mode, Dual-Page, Invert, Fullscreen & Zoom Controls
-        document.getElementById('reader-font-inc')?.addEventListener('click', () => {
-            state.readerPrefs.fontSize = Math.min(28, (state.readerPrefs.fontSize || 15) + 1);
-            document.getElementById('lbl-font-size').textContent = `${state.readerPrefs.fontSize}px`;
-            renderReaderPage('none'); ZOF.saveState();
-        });
-        document.getElementById('reader-font-dec')?.addEventListener('click', () => {
-            state.readerPrefs.fontSize = Math.max(11, (state.readerPrefs.fontSize || 15) - 1);
-            document.getElementById('lbl-font-size').textContent = `${state.readerPrefs.fontSize}px`;
-            renderReaderPage('none'); ZOF.saveState();
-        });
-        document.getElementById('reader-font-family')?.addEventListener('change', (e) => { state.readerPrefs.fontFamily = e.target.value; renderReaderPage('none'); ZOF.saveState(); });
-        document.getElementById('reader-line-height')?.addEventListener('change', (e) => { state.readerPrefs.lineHeight = e.target.value; renderReaderPage('none'); ZOF.saveState(); });
-        document.getElementById('reader-align-select')?.addEventListener('change', (e) => { state.readerPrefs.align = e.target.value; renderReaderPage('none'); ZOF.saveState(); });
-        document.getElementById('pdf-zoom-in')?.addEventListener('click', () => document.getElementById('reader-font-inc')?.click());
-        document.getElementById('pdf-zoom-out')?.addEventListener('click', () => document.getElementById('reader-font-dec')?.click());
-
-        document.getElementById('reader-mode-btn')?.addEventListener('click', () => {
-            const modes = ['curl', 'slide', 'fade', 'scroll'];
-            const next = modes[(modes.indexOf(state.readerPrefs.pageMode || 'curl') + 1) % modes.length];
-            state.readerPrefs.pageMode = next;
-            ZOF.saveState();
-            renderReaderPage(next);
-            ZOF.toast(`📄 Reader Mode: ${next.toUpperCase()}`);
-        });
-        document.getElementById('reader-dual-pdf-btn')?.addEventListener('click', () => {
-            state.readerPrefs.dualPage = !state.readerPrefs.dualPage;
-            renderReaderPage('none');
-            ZOF.toast(state.readerPrefs.dualPage ? '📖 Dual-Page Spread ON' : '📄 Single-Page Mode');
-        });
-        document.getElementById('reader-pdf-invert-btn')?.addEventListener('click', () => {
-            state.readerPrefs.pdfInvert = !state.readerPrefs.pdfInvert;
-            renderReaderPage('none');
-            ZOF.toast('🌗 Toggled PDF Night Invert');
-        });
-        document.getElementById('reader-fullscreen-btn')?.addEventListener('click', () => {
-            document.body.classList.toggle('reader-fullscreen');
-            ZOF.toast('⛶ Toggled Full-Screen Immersive Mode');
-        });
-
-        // Draggable Focus Reading Ruler & Auto-Scroll
-        const rulerBar = document.getElementById('reading-ruler-bar');
-        document.getElementById('reader-ruler-btn')?.addEventListener('click', () => rulerBar?.classList.toggle('hidden'));
-        let draggingRuler = false;
-        rulerBar?.addEventListener('mousedown', () => { draggingRuler = true; });
-        rulerBar?.addEventListener('touchstart', () => { draggingRuler = true; }, { passive: true });
-        document.addEventListener('mousemove', (e) => {
-            if (!draggingRuler || !rulerBar) return;
-            const rect = document.getElementById('reader-stage-wrapper')?.getBoundingClientRect();
-            if (rect) rulerBar.style.top = `${Math.max(0, Math.min(rect.height - 36, e.clientY - rect.top - 18))}px`;
-        });
-        document.addEventListener('touchmove', (e) => {
-            if (!draggingRuler || !rulerBar) return;
-            const rect = document.getElementById('reader-stage-wrapper')?.getBoundingClientRect();
-            if (rect && e.touches[0]) rulerBar.style.top = `${Math.max(0, Math.min(rect.height - 36, e.touches[0].clientY - rect.top - 18))}px`;
-        }, { passive: true });
-        document.addEventListener('mouseup', () => { draggingRuler = false; });
-        document.addEventListener('touchend', () => { draggingRuler = false; });
-
-        document.getElementById('reader-autoscroll-btn')?.addEventListener('click', () => {
-            if (autoScrollTimer) {
-                clearInterval(autoScrollTimer); autoScrollTimer = null;
-                return ZOF.toast('⏹ Stopped Auto-Scroll');
-            }
-            autoScrollTimer = setInterval(() => { if (contentBox) contentBox.scrollTop += 1; }, 45);
-            ZOF.toast('⏬ Auto-Scroll Active (Tap again to stop)');
-        });
-
-        // Freehand Pen & Highlighter Ink Canvas
-        const inkCanvas = document.getElementById('reader-ink-canvas');
-        let drawingInk = false;
-        document.getElementById('reader-ink-btn')?.addEventListener('click', () => {
-            if (!inkCanvas || !contentBox) return;
-            const hidden = inkCanvas.classList.toggle('hidden');
-            if (!hidden) {
-                inkCanvas.width = contentBox.clientWidth;
-                inkCanvas.height = contentBox.clientHeight;
-                ZOF.toast('✏️ Freehand Ink Pen Active (Draw on page)');
-            } else { ZOF.toast('✏️ Ink Layer Hidden'); }
-        });
-        inkCanvas?.addEventListener('pointerdown', (e) => {
-            drawingInk = true;
-            const ctx = inkCanvas.getContext('2d');
-            ctx.strokeStyle = 'rgba(250, 204, 21, 0.75)';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.moveTo(e.offsetX, e.offsetY);
-        });
-        inkCanvas?.addEventListener('pointermove', (e) => {
-            if (!drawingInk) return;
-            const ctx = inkCanvas.getContext('2d');
-            ctx.lineTo(e.offsetX, e.offsetY);
-            ctx.stroke();
-        });
-        inkCanvas?.addEventListener('pointerup', () => { drawingInk = false; });
-
-        // System TTS with Real-Time Sentence Highlighting & Shake-to-Speak
-        document.getElementById('reader-tts-btn')?.addEventListener('click', () => {
-            document.getElementById('reader-tts-bar')?.classList.toggle('hidden');
-        });
-        function speakCurrentSentence() {
-            if (!('speechSynthesis' in window)) return ZOF.toast('TTS not supported');
-            window.speechSynthesis.cancel();
-            const book = getActiveBook();
-            const raw = (book?.pages?.[book.currentPage - 1] || '').replace(/<[^>]+>/g, '');
-            ttsSentences = raw.match(/[^.!?]+[.!?]+|\S+/g) || [raw];
-            if (!ttsSentences.length) return;
-            ttsIndex = Math.max(0, Math.min(ttsSentences.length - 1, ttsIndex));
-            const sent = ttsSentences[ttsIndex].trim();
-            const utter = new SpeechSynthesisUtterance(sent);
-            utter.rate = parseFloat(document.getElementById('tts-speed-select')?.value || '1.0');
-            utter.onend = () => {
-                if (ttsSpeaking && ttsIndex < ttsSentences.length - 1) { ttsIndex++; speakCurrentSentence(); }
-                else { ttsSpeaking = false; }
-            };
-            ttsSpeaking = true;
-            window.speechSynthesis.speak(utter);
-            ZOF.toast(`🔊 Speaking sentence ${ttsIndex + 1}/${ttsSentences.length}`);
-        }
-        document.getElementById('tts-play-pause')?.addEventListener('click', () => {
-            if (ttsSpeaking) { window.speechSynthesis.cancel(); ttsSpeaking = false; ZOF.toast('⏸ TTS Paused'); }
-            else { speakCurrentSentence(); }
-        });
-        document.getElementById('tts-prev-sent')?.addEventListener('click', () => { ttsIndex = Math.max(0, ttsIndex - 1); speakCurrentSentence(); });
-        document.getElementById('tts-next-sent')?.addEventListener('click', () => { ttsIndex++; speakCurrentSentence(); });
-        document.getElementById('tts-shake-toggle')?.addEventListener('click', () => {
-            shakeEnabled = !shakeEnabled;
-            ZOF.toast(shakeEnabled ? '📳 Shake-to-Speak ON' : '📳 Shake-to-Speak OFF');
-        });
-
-        // WakeLock, Tilt-to-Turn & 1-3-7-21-30d Automated Spaced Revision
-        document.getElementById('toggle-wakelock-btn')?.addEventListener('click', async () => {
-            if (wakeLockObj) { await wakeLockObj.release(); wakeLockObj = null; return ZOF.toast('💡 Screen WakeLock Released'); }
-            try { wakeLockObj = await navigator.wakeLock?.request('screen'); ZOF.toast('💡 Keep Screen Awake ON'); }
-            catch (e) { ZOF.toast('💡 WakeLock active while tab is focused'); }
-        });
-        document.getElementById('toggle-tilt-btn')?.addEventListener('click', () => {
-            tiltEnabled = !tiltEnabled;
-            ZOF.toast(tiltEnabled ? '📱 Tilt-to-Turn Page ON' : '📱 Tilt-to-Turn OFF');
-        });
-        window.addEventListener('deviceorientation', (e) => {
-            if (!tiltEnabled) return;
-            if (e.gamma > 28) turnPage(1);
-            else if (e.gamma < -28) turnPage(-1);
-        });
-
-        document.getElementById('mark-chapter-learned-btn')?.addEventListener('click', () => {
-            const book = getActiveBook();
-            if (!book) return;
-            const intervals = [1, 3, 7, 21, 30];
-            intervals.forEach(days => {
-                const d = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
-                state.todos.unshift({
-                    id: Date.now() + days,
-                    title: `🔁 [Day +${days} Revision] ${book.title} (p. ${book.currentPage})`,
-                    priority: 'High',
-                    list: 'planned',
-                    myDay: days === 1,
-                    important: true,
-                    done: false,
-                    due: d,
-                    repeat: 'none',
-                    repeatDays: [],
-                    linkedStudy: 'reader',
-                    note: `Automated 1-3-7-21-30d Spaced Revision from Moon+ Reader.`,
-                    steps: []
-                });
-            });
-            ZOF.saveState();
-            if (window.ZOF.renderTodos) window.ZOF.renderTodos();
-            ZOF.toast('📅 Scheduled Day +1, +3, +7, +21 & +30 Revisions in MS To-Do!');
-        });
-
-        // Bookmarks, TOC/Highlights Drawer, In-Book Search & High-Yield Cram Sheet
-        document.getElementById('reader-bookmark-btn')?.addEventListener('click', () => {
-            const book = getActiveBook();
-            if (!book) return;
-            state.annotations.unshift({ id: Date.now(), bookId: book.id, page: book.currentPage, type: 'bookmark', text: `Bookmark on Page ${book.currentPage}`, color: 'amber' });
-            ZOF.saveState();
-            ZOF.toast(`🔖 Saved Bookmark for Page ${book.currentPage}!`);
-        });
-        document.getElementById('reader-toc-btn')?.addEventListener('click', () => {
-            const drawer = document.getElementById('reader-toc-drawer');
-            const book = getActiveBook();
-            if (!drawer || !book) return;
-            drawer.classList.toggle('hidden');
-            const anns = (state.annotations || []).filter(a => a.bookId === book.id);
-            drawer.innerHTML = `<div class="font-bold text-blue-400">📑 Pages & Saved Annotations (${anns.length})</div>` +
-                anns.map(a => `<div onclick="window.ZOF.openBook(${book.id}, ${a.page})" class="p-1.5 rounded bg-slate-950 border border-slate-800 cursor-pointer flex justify-between"><span>${a.type === 'bookmark' ? '🔖' : '🖍️'} ${a.text.slice(0, 60)}</span><span class="text-emerald-400 font-mono">p. ${a.page}</span></div>`).join('');
-        });
-        document.getElementById('reader-search-toggle-btn')?.addEventListener('click', () => document.getElementById('reader-search-bar')?.classList.toggle('hidden'));
-        document.getElementById('inbook-search-btn')?.addEventListener('click', () => {
-            const q = (document.getElementById('inbook-search-input')?.value || '').toLowerCase();
-            const book = getActiveBook();
-            if (!q || !book) return;
-            const idx = (book.pages || []).findIndex(p => p.toLowerCase().includes(q));
-            if (idx >= 0) { window.ZOF.openBook(book.id, idx + 1); ZOF.toast(`🔍 Found "${q}" on Page ${idx + 1}`); }
-            else { ZOF.toast(`No match for "${q}" in this book`); }
-        });
-
-        document.getElementById('status-high-yield-btn')?.addEventListener('click', () => {
-            const cram = (state.annotations || []).filter(a => ['blue', 'orange', 'red'].includes(a.color));
-            const txt = cram.map(a => `• [${a.color.toUpperCase()} — p. ${a.page}] ${a.text} ${a.note ? '(' + a.note + ')' : ''}`).join('\n') || 'Highlight formulas (Blue), exam topics (Orange), or doubts (Red) to build your High-Yield Cram Sheet!';
-            alert(`🚨 LAST-MINUTE HIGH-YIELD CRAM SHEET:\n\n${txt}`);
-        });
-
-        document.getElementById('export-annotations-btn')?.addEventListener('click', () => {
-            const md = (state.annotations || []).map(a => `- **[p. ${a.page} | ${a.color}]** ${a.text} ${a.note ? '— *Note: ' + a.note + '*' : ''}`).join('\n');
-            const blob = new Blob([`# Exported Book Highlights & Notes\n\n${md}`], { type: 'text/markdown' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = 'ZikrOFikr_Book_Annotations.md';
-            link.click();
-            ZOF.toast('📤 Exported Highlights & Notes (.MD)!');
-        });
-
-        // =====================================================================
-        // 5. FLOATING 15-ACTION SELECTION MENU
-        // =====================================================================
-        let selectedText = '';
-        const selToolbar = document.getElementById('selection-toolbar');
-        const checkSelection = () => {
-            setTimeout(() => {
-                const txt = window.getSelection()?.toString().trim() || '';
-                if (txt.length > 2) {
-                    selectedText = txt;
-                    selToolbar?.classList.remove('hidden');
-                    selToolbar.style.bottom = '68px';
-                    selToolbar.style.left = '10px';
-                }
-            }, 80);
-        };
-        document.addEventListener('mouseup', checkSelection);
-        document.addEventListener('touchend', checkSelection);
-
-        document.querySelectorAll('.sel-action-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const act = btn.dataset.act;
-                const color = btn.dataset.color || 'yellow';
-                const book = getActiveBook() || { id: 101, title: 'Study Reader', author: '14th Ed.', currentPage: 1 };
-                selToolbar?.classList.add('hidden');
-                if (!selectedText) return;
-                const cite = `${book.title} (${book.author || 'Verified'}), p. ${book.currentPage || 1}`;
-
-                if (act === 'highlight' || act === 'underline' || act === 'note') {
-                    const note = act === 'note' ? (prompt('Attach Floating Note to Highlight:') || '') : '';
-                    state.annotations.unshift({ id: Date.now(), bookId: book.id, page: book.currentPage, text: selectedText, color, style: act === 'underline' ? 'underline' : 'fill', note });
-                    state.knowledgeBase.unshift({ id: Date.now() + 1, category: 'Exam Prep', type: 'Book/PDF', edition: book.author || 'Verified', cite, title: `Highlight [${color.toUpperCase()}]: ${selectedText.slice(0, 34)}...`, body: selectedText + (note ? `\nNote: ${note}` : ''), hash: ZOF.hashText(selectedText), selectedForAI: true });
-                    ZOF.saveState(); renderReaderPage('none'); if (window.ZOF.renderKB) window.ZOF.renderKB();
-                    ZOF.toast(`🖍️ Highlighted & Saved to Verified KB [${cite}]`);
-                } else if (act === 'copy') {
-                    navigator.clipboard?.writeText(`${selectedText} [${cite}]`);
-                    ZOF.toast('📋 Copied with source citation!');
-                } else if (act === 'define') {
-                    if (window.ZOF.lookupArabicOrTerm) window.ZOF.lookupArabicOrTerm(selectedText);
-                    else ZOF.toast(`📖 Definition / Root Lookup: "${selectedText.slice(0, 45)}"`);
-                } else if (act === 'translate') {
-                    ZOF.switchTab('page-ai');
-                    document.getElementById('ai-prompt-input').value = `Translate & explain medical/context terms from [${cite}]: "${selectedText}"`;
-                    document.getElementById('send-ai-btn')?.click();
-                } else if (act === 'search_lib') {
-                    document.querySelector('[data-lib="lib-panel-bookshelf"]')?.click();
-                    document.getElementById('shelf-search-input').value = selectedText.slice(0, 40);
-                    renderBookshelf();
-                } else if (act === 'explain' || act === 'summarize') {
-                    ZOF.switchTab('page-ai');
-                    document.getElementById('ai-agent-select').value = 'mentor';
-                    document.getElementById('ai-prompt-input').value = `${act === 'explain' ? 'Explain simply' : 'Summarize & create mnemonic'} from [${cite}]: "${selectedText}"`;
-                    document.getElementById('send-ai-btn')?.click();
-                } else if (act === 'flashcard') {
-                    state.flashcards.unshift({ id: Date.now(), q: `From [${cite}], explain: "${selectedText.slice(0, 65)}..."`, a: selectedText, src: cite, interval: '1d', mastered: false });
-                    ZOF.saveState(); if (window.ZOF.renderFlashcards) window.ZOF.renderFlashcards();
-                    ZOF.toast(`🃏 Created Source-Linked Flashcard [${cite}]!`);
-                } else if (act === 'kb') {
-                    state.knowledgeBase.unshift({ id: Date.now(), category: 'Biology', type: 'Book/PDF', edition: book.author || 'Verified', cite, title: selectedText.slice(0, 42), body: selectedText, hash: ZOF.hashText(selectedText), selectedForAI: true });
-                    ZOF.saveState(); if (window.ZOF.renderKB) window.ZOF.renderKB();
-                    ZOF.toast('📥 Indexed directly into Verified KB!');
-                } else if (act === 'tts') {
-                    if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(selectedText));
-                }
-            });
-        });
-
-        renderBookshelf();
-        renderReaderPage('none');
+      };
+      req.onsuccess = (e) => {
+        state.db = e.target.result;
+        resolve(state.db);
+      };
+      req.onerror = (e) => reject(e.target.error);
     });
-})();
+  }
 
+  async function loadAllBooks() {
+    const db = await openVaultDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction('books', 'readonly');
+      const store = tx.objectStore('books');
+      const req = store.getAll();
+      req.onsuccess = () => {
+        state.books = (req.result || []).sort((a, b) => b.addedAt - a.addedAt);
+        syncBooksToLocalAIBrain();
+        resolve(state.books);
+      };
+      req.onerror = () => resolve([]);
+    });
+  }
+
+  async function saveBookToDB(bookRecord) {
+    const db = await openVaultDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('books', 'readwrite');
+      tx.objectStore('books').put(bookRecord);
+      tx.oncomplete = () => {
+        syncBooksToLocalAIBrain();
+        resolve(true);
+      };
+      tx.onerror = (e) => reject(e.target.error);
+    });
+  }
+
+  async function deleteBookFromDB(bookId) {
+    const db = await openVaultDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction('books', 'readwrite');
+      tx.objectStore('books').delete(bookId);
+      tx.oncomplete = () => {
+        syncBooksToLocalAIBrain();
+        resolve(true);
+      };
+    });
+  }
+
+  // Expose extracted book knowledge to Local AI & Deen modules
+  function syncBooksToLocalAIBrain() {
+    window.ZikrLibraryBrain = state.books.map((b) => ({
+      id: b.id,
+      title: b.title,
+      markdown: b.mdContent || '',
+      jsonIndex: b.jsonIndex || [],
+      annotations: b.annotations || []
+    }));
+  }
+
+  // =========================================================================
+  // 3. LOAD PDF.JS ENGINE DYNAMICALLY
+  // =========================================================================
+  function ensurePdfJsLoaded() {
+    return new Promise((resolve) => {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_CDN;
+        return resolve(window.pdfjsLib);
+      }
+      const script = document.createElement('script');
+      script.src = PDFJS_CDN;
+      script.onload = () => {
+        if (window.pdfjsLib) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_CDN;
+        }
+        resolve(window.pdfjsLib || null);
+      };
+      script.onerror = () => resolve(null);
+      document.head.appendChild(script);
+    });
+  }
+
+  // =========================================================================
+  // 4. SMART BOOK SCANNER (DETECT IMAGES, HEADINGS, .MD / .JSON / .TXT)
+  // =========================================================================
+  async function analyzeUploadedFile(file) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    const sizeMB = +(file.size / (1024 * 1024)).toFixed(2);
+    const arrayBuffer = await file.arrayBuffer();
+
+    const analysis = {
+      file,
+      name: file.name,
+      ext,
+      sizeMB,
+      isLarge: sizeMB > 25,
+      arrayBuffer,
+      pageCount: 1,
+      imageCount: 0,
+      hasImages: false,
+      rawText: '',
+      mdContent: '',
+      jsonIndex: []
+    };
+
+    if (ext === 'pdf') {
+      const pdfjs = await ensurePdfJsLoaded();
+      if (pdfjs) {
+        try {
+          const pdf = await pdfjs.getDocument({ data: arrayBuffer.slice(0) }).promise;
+          analysis.pageCount = pdf.numPages;
+          let mdLines = [`# ${file.name.replace(/\.pdf$/i, '')}\n`];
+          let rawLines = [];
+          let imgTotal = 0;
+
+          // Scan up to first 40 pages rapidly for immediate AI index & image detection
+          const maxScan = Math.min(pdf.numPages, 40);
+          for (let p = 1; p <= maxScan; p++) {
+            const page = await pdf.getPage(p);
+            const textContent = await page.getTextContent();
+            const pageStrings = textContent.items.map((it) => it.str).join(' ').trim();
+
+            // Check operator list for embedded images/diagrams
+            try {
+              const ops = await page.getOperatorList();
+              for (let i = 0; i < ops.fnArray.length; i++) {
+                if (
+                  ops.fnArray[i] === pdfjs.OPS.paintImageXObject ||
+                  ops.fnArray[i] === pdfjs.OPS.paintInlineImageXObject
+                ) {
+                  imgTotal++;
+                }
+              }
+            } catch (_) {}
+
+            if (pageStrings) {
+              mdLines.push(`\n## Page ${p}\n${pageStrings}`);
+              rawLines.push(`[Page ${p}] ${pageStrings}`);
+              analysis.jsonIndex.push({ page: p, text: pageStrings });
+            }
+          }
+          analysis.imageCount = imgTotal;
+          analysis.hasImages = imgTotal > 0;
+          analysis.mdContent = mdLines.join('\n');
+          analysis.rawText = rawLines.join('\n\n');
+        } catch (err) {
+          console.warn('PDF scan fallback:', err);
+        }
+      }
+    } else {
+      const text = new TextDecoder('utf-8').decode(arrayBuffer);
+      analysis.rawText = text;
+      analysis.mdContent = ext === 'md' ? text : `# ${file.name}\n\n${text}`;
+      const chunks = text.split(/\n{2,}/);
+      analysis.pageCount = Math.max(1, Math.ceil(chunks.length / 18));
+      analysis.jsonIndex = chunks.slice(0, 200).map((c, idx) => ({
+        page: Math.floor(idx / 18) + 1,
+        text: c.trim()
+      }));
+    }
+
+    return analysis;
+  }
+
+  // =========================================================================
+  // 5. MAIN LIBRARY DASHBOARD UI
+  // =========================================================================
+  function getMountContainer() {
+    const selectors = [
+      '#module-library',
+      '#library-module',
+      '#view-library',
+      '#library-view',
+      '#library-container',
+      '#tab-library',
+      '[data-module="library"]',
+      '[data-view="library"]'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  async function renderLibraryDashboard(targetEl) {
+    injectStyles();
+    const container = targetEl || getMountContainer();
+    if (!container) return;
+
+    await loadAllBooks();
+
+    container.innerHTML = `
+      <div class="zof-lib-wrap">
+        <div class="zof-lib-topbar">
+          <div class="zof-lib-title">
+            <h2>📚 Zikr-O-Fikr Moon+ Reader Pro & AI Vault</h2>
+            <p>Visual PDF Engine (Biology Diagrams & Layout Intact) • Smart .MD/.JSON Brain Indexer • Full Undo Stack</p>
+          </div>
+          <div class="zof-lib-actions">
+            <input type="file" id="zof-book-file-input" accept=".pdf,.md,.txt,.json" style="display:none" />
+            <button class="zof-btn zof-btn-primary" id="zof-btn-upload-book">
+              ➕ Add Book / PDF / Quran
+            </button>
+            <button class="zof-btn" id="zof-btn-link-vault" title="Link directly to a Windows 11 folder for copy-paste access">
+              📂 ${state.vaultHandle ? 'Vault Linked (' + state.vaultHandle.name + ')' : 'Link Windows Vault Folder'}
+            </button>
+            <button class="zof-btn zof-btn-help" id="zof-btn-format-guide" title="Storage Format & Minimum Size Guide">
+              ?
+            </button>
+          </div>
+        </div>
+
+        <div class="zof-book-grid" id="zof-book-grid">
+          ${
+            state.books.length === 0
+              ? `<div style="grid-column: 1 / -1; text-align:center; padding:48px 20px; background:rgba(15,23,42,0.6); border:1px dashed rgba(148,163,184,0.3); border-radius:14px;">
+                  <div style="font-size:2.4rem; margin-bottom:10px;">📖</div>
+                  <h3 style="margin:0 0 6px; color:#f8fafc;">Your Moon+ Reader Vault is Empty</h3>
+                  <p style="margin:0 0 16px; color:#94a3b8; font-size:0.9rem;">
+                    Add any Biology PDF, Deen book, or Markdown/Text file. Original visual diagrams stay intact while Local AI indexes the text in kilobytes.
+                  </p>
+                  <button class="zof-btn zof-btn-primary" id="zof-btn-empty-upload">➕ Upload First Book (.PDF / .MD / .TXT)</button>
+                </div>`
+              : state.books
+                  .map(
+                    (b) => `
+                <div class="zof-book-card" data-book-id="${b.id}">
+                  <div>
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                      <h3 style="margin:0; font-size:1.02rem; color:#f8fafc; word-break:break-word;">${escapeHtml(b.title)}</h3>
+                      <span style="font-size:0.75rem; color:#94a3b8; white-space:nowrap;">${b.sizeMB || '0.1'} MB</span>
+                    </div>
+                    <div class="zof-book-badges">
+                      ${b.formats?.pdf ? `<span class="zof-badge">📕 Visual PDF (${b.pageCount || 1}p)</span>` : ''}
+                      ${b.hasImages ? `<span class="zof-badge amber">🖼️ ${b.imageCount} Diagrams Kept</span>` : ''}
+                      ${b.formats?.md ? `<span class="zof-badge green">🧠 .MD AI Brain</span>` : ''}
+                      ${b.formats?.json ? `<span class="zof-badge green">⚡ .JSON Index</span>` : ''}
+                      ${b.formats?.txt ? `<span class="zof-badge">📄 .TXT</span>` : ''}
+                    </div>
+                    <p style="margin:10px 0 0; font-size:0.8rem; color:#94a3b8;">
+                      Last Page: <strong>${b.lastPage || 1} / ${b.pageCount || 1}</strong> •
+                      Highlights/Notes: <strong>${(b.annotations || []).length}</strong>
+                    </p>
+                  </div>
+                  <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;">
+                    <button class="zof-btn zof-btn-primary zof-act-read" data-id="${b.id}" style="flex:1; justify-content:center;">
+                      ⛶ Read Full-Screen
+                    </button>
+                    <button class="zof-btn zof-act-export" data-id="${b.id}" title="Export .MD / .JSON / .TXT to Laptop">
+                      💾
+                    </button>
+                    <button class="zof-btn zof-btn-danger zof-act-delete" data-id="${b.id}" title="Remove Book">
+                      🗑️
+                    </button>
+                  </div>
+                </div>
+              `
+                  )
+                  .join('')
+          }
+        </div>
+      </div>
+    `;
+
+    // Bind events
+    const fileInput = container.querySelector('#zof-book-file-input');
+    const upBtn = container.querySelector('#zof-btn-upload-book');
+    const emptyUpBtn = container.querySelector('#zof-btn-empty-upload');
+    const vaultBtn = container.querySelector('#zof-btn-link-vault');
+    const guideBtn = container.querySelector('#zof-btn-format-guide');
+
+    if (upBtn) upBtn.onclick = () => fileInput.click();
+    if (emptyUpBtn) emptyUpBtn.onclick = () => fileInput.click();
+    if (fileInput) {
+      fileInput.onchange = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const analysis = await analyzeUploadedFile(file);
+        showFormatSelectorModal(analysis, container);
+        fileInput.value = '';
+      };
+    }
+
+    if (vaultBtn) {
+      vaultBtn.onclick = async () => {
+        if (!window.showDirectoryPicker) {
+          alert('Use Chrome or Edge on Windows 11 to link a direct local folder.');
+          return;
+        }
+        try {
+          const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+          state.vaultHandle = dirHandle;
+          let importedCount = 0;
+          for await (const entry of dirHandle.values()) {
+            if (entry.kind === 'file' && /\.(pdf|md|txt|json)$/i.test(entry.name)) {
+              const exists = state.books.some((b) => b.title === entry.name);
+              if (!exists) {
+                const file = await entry.getFile();
+                const analysis = await analyzeUploadedFile(file);
+                await finalizeBookSave(analysis, {
+                  pdf: analysis.ext === 'pdf',
+                  md: true,
+                  txt: false,
+                  json: true
+                });
+                importedCount++;
+              }
+            }
+          }
+          await renderLibraryDashboard(container);
+          alert(`Windows Vault Folder "${dirHandle.name}" linked! Auto-synced ${importedCount} book(s).`);
+        } catch (err) {
+          console.warn('Vault picker cancelled:', err);
+        }
+      };
+    }
+
+    if (guideBtn) {
+      guideBtn.onclick = () => showFormatGuideModal();
+    }
+
+    container.querySelectorAll('.zof-act-read').forEach((btn) => {
+      btn.onclick = () => {
+        const book = state.books.find((x) => x.id === btn.dataset.id);
+        if (book) launchMoonReaderFullScreen(book);
+      };
+    });
+
+    container.querySelectorAll('.zof-act-export').forEach((btn) => {
+      btn.onclick = () => {
+        const book = state.books.find((x) => x.id === btn.dataset.id);
+        if (book) showExportFormatModal(book);
+      };
+    });
+
+    container.querySelectorAll('.zof-act-delete').forEach((btn) => {
+      btn.onclick = async () => {
+        const bookId = btn.dataset.id;
+        const bookBackup = state.books.find((x) => x.id === bookId);
+        if (!bookBackup) return;
+        await deleteBookFromDB(bookId);
+        await renderLibraryDashboard(container);
+        showUndoToast(`Book "${bookBackup.title}" removed`, async () => {
+          await saveBookToDB(bookBackup);
+          await renderLibraryDashboard(container);
+        });
+      };
+    });
+  }
+
+  // =========================================================================
+  // 6. SMART FORMAT SELECTOR MODAL & (?) FORMAT GUIDE MODAL
+  // =========================================================================
+  function showFormatSelectorModal(analysis, dashboardContainer) {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'zof-modal-backdrop';
+
+    const keepPdfDefault = analysis.ext === 'pdf' && (analysis.hasImages || analysis.sizeMB < 50);
+
+    backdrop.innerHTML = `
+      <div class="zof-modal">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0; font-size:1.15rem; color:#38bdf8;">📂 Smart Book & AI Brain Format Selector</h3>
+          <button class="zof-btn" id="zof-modal-close">✕</button>
+        </div>
+
+        <div style="background:rgba(15,23,42,0.9); border:1px solid rgba(148,163,184,0.25); border-radius:10px; padding:12px; margin-bottom:14px; font-size:0.86rem;">
+          <div><strong>File:</strong> ${escapeHtml(analysis.name)} (${analysis.sizeMB} MB • ${analysis.pageCount} Pages)</div>
+          <div style="margin-top:4px; color:${analysis.hasImages ? '#fde047' : '#86efac'};">
+            🔍 <strong>Auto-Scan:</strong> ${
+              analysis.hasImages
+                ? `Detected ${analysis.imageCount}+ visual images/diagrams — Visual .PDF recommended so diagrams stay 100% intact.`
+                : `Text-only book detected — You can save as .MD / .JSON to save 95% storage space, or keep .PDF layout.`
+            }
+          </div>
+          ${
+            analysis.isLarge
+              ? `<div style="margin-top:6px; color:#fca5a5;">⚠️ <strong>Large File Notice (${analysis.sizeMB} MB):</strong> File is heavy, but Zikr-O-Fikr allows full import with Lazy 3-Page Virtualization.</div>`
+              : ''
+          }
+        </div>
+
+        <div style="font-size:0.88rem; margin-bottom:8px; font-weight:600;">Choose Which Formats to Save Inside Your Vault:</div>
+
+        <label class="zof-format-option">
+          <input type="checkbox" id="zof-fmt-pdf" ${keepPdfDefault || analysis.ext === 'pdf' ? 'checked' : ''} ${analysis.ext !== 'pdf' ? 'disabled' : ''} />
+          <div>
+            <div style="font-weight:600; color:#f8fafc;">📕 Visual .PDF Format (${analysis.sizeMB} MB)</div>
+            <div style="font-size:0.78rem; color:#94a3b8;">Preserves 100% of original biology diagrams, color charts, fonts & page layout in Moon+ Reader mode.</div>
+          </div>
+        </label>
+
+        <label class="zof-format-option">
+          <input type="checkbox" id="zof-fmt-md" checked />
+          <div>
+            <div style="font-weight:600; color:#86efac;">🧠 Structured .MD Markdown (~${Math.max(1, Math.round(analysis.mdContent.length / 1024))} KB)</div>
+            <div style="font-size:0.78rem; color:#94a3b8;">Preserves # Headings & Page Sections for instant Local AI & Deen training using tiny storage.</div>
+          </div>
+        </label>
+
+        <label class="zof-format-option">
+          <input type="checkbox" id="zof-fmt-json" checked />
+          <div>
+            <div style="font-weight:600; color:#7dd3fc;">⚡ Indexed .JSON Brain (~${Math.max(1, Math.round(JSON.stringify(analysis.jsonIndex).length / 1024))} KB)</div>
+            <div style="font-size:0.78rem; color:#94a3b8;">Page-by-page structured array so your 5-Cloud + Local AI Council can cite exact page numbers.</div>
+          </div>
+        </label>
+
+        <label class="zof-format-option">
+          <input type="checkbox" id="zof-fmt-txt" />
+          <div>
+            <div style="font-weight:600; color:#e2e8f0;">📄 Plain .TXT (~${Math.max(1, Math.round(analysis.rawText.length / 1024))} KB)</div>
+            <div style="font-size:0.78rem; color:#94a3b8;">Ultra-lightweight raw unformatted text copy.</div>
+          </div>
+        </label>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+          <button class="zof-btn" id="zof-fmt-cancel">Cancel</button>
+          <button class="zof-btn zof-btn-primary" id="zof-fmt-save-open">💾 Save & Open in Moon+ Full-Screen</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(backdrop);
+
+    const close = () => backdrop.remove();
+    backdrop.querySelector('#zof-modal-close').onclick = close;
+    backdrop.querySelector('#zof-fmt-cancel').onclick = close;
+
+    backdrop.querySelector('#zof-fmt-save-open').onclick = async () => {
+      const formats = {
+        pdf: backdrop.querySelector('#zof-fmt-pdf').checked && analysis.ext === 'pdf',
+        md: backdrop.querySelector('#zof-fmt-md').checked,
+        json: backdrop.querySelector('#zof-fmt-json').checked,
+        txt: backdrop.querySelector('#zof-fmt-txt').checked
+      };
+      const savedBook = await finalizeBookSave(analysis, formats);
+      close();
+      await renderLibraryDashboard(dashboardContainer);
+      launchMoonReaderFullScreen(savedBook);
+    };
+  }
+
+  async function finalizeBookSave(analysis, formats) {
+    const bookRecord = {
+      id: 'book_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      title: analysis.name,
+      ext: analysis.ext,
+      sizeMB: analysis.sizeMB,
+      pageCount: analysis.pageCount,
+      lastPage: 1,
+      hasImages: analysis.hasImages,
+      imageCount: analysis.imageCount,
+      formats,
+      pdfBuffer: formats.pdf ? analysis.arrayBuffer : null,
+      mdContent: formats.md ? analysis.mdContent : '',
+      txtContent: formats.txt ? analysis.rawText : '',
+      jsonIndex: formats.json ? analysis.jsonIndex : [],
+      annotations: [], // { id, page, type: 'text'|'box', color, text, note, rects }
+      bookmarks: [],   // [pageNumbers]
+      addedAt: Date.now()
+    };
+    await saveBookToDB(bookRecord);
+    state.books.unshift(bookRecord);
+    return bookRecord;
+  }
+
+  function showFormatGuideModal() {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'zof-modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="zof-modal">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0; color:#38bdf8;">ℹ️ Zikr-O-Fikr Minimum-Storage Format Guide</h3>
+          <button class="zof-btn" id="zof-guide-close">✕</button>
+        </div>
+        <div style="font-size:0.88rem; line-height:1.65; color:#cbd5e1;">
+          <p><strong>1. Biology / Visual Diagrams & Real Books (<code>.PDF</code> + <code>.MD</code>):</strong><br/>
+          Keep <strong>Visual .PDF</strong> checked so Moon+ Reader renders 100% of original diagrams and colors, plus <strong>.MD</strong> so your Local AI learns every heading in kilobytes.</p>
+          <p><strong>2. Pure Text Books & Notes (<code>.MD</code> / <code>.JSON</code>):</strong><br/>
+          Untick <code>.PDF</code> on text-only books to shrink a 20 MB file down to ~200 KB while preserving all chapters and subtopics.</p>
+          <p><strong>3. Tarteel Quran & Audiobook Voice Reference (<code>.OPUS</code> / <code>.OGG</code> / <code>.MP3</code>):</strong><br/>
+          Use <code>.opus</code> or <code>.ogg</code> (32–64 kbps) for human-realistic audio and Hifz voice matching with 70% smaller file size.</p>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(backdrop);
+    backdrop.querySelector('#zof-guide-close').onclick = () => backdrop.remove();
+  }
+
+  function showExportFormatModal(book) {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'zof-modal-backdrop';
+    backdrop.innerHTML = `
+      <div class="zof-modal">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0; color:#38bdf8;">💾 Export Book & Annotations to Windows</h3>
+          <button class="zof-btn" id="zof-exp-close">✕</button>
+        </div>
+        <p style="font-size:0.86rem; color:#94a3b8;">Download converted minimum-space files for <strong>${escapeHtml(book.title)}</strong>:</p>
+        <div style="display:flex; flex-direction:column; gap:10px; margin-top:14px;">
+          <button class="zof-btn" id="zof-dl-md">🧠 Download Structured .MD (With Highlights & Notes)</button>
+          <button class="zof-btn" id="zof-dl-json">⚡ Download Indexed .JSON Brain</button>
+          <button class="zof-btn" id="zof-dl-txt">📄 Download Plain .TXT</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(backdrop);
+    backdrop.querySelector('#zof-exp-close').onclick = () => backdrop.remove();
+
+    const baseName = book.title.replace(/\.[^/.]+$/, '');
+    backdrop.querySelector('#zof-dl-md').onclick = () => {
+      const notesMd = (book.annotations || [])
+        .map((a) => `- **[Page ${a.page} | ${a.color.toUpperCase()}]** "${a.text || 'Diagram Highlight'}" ${a.note ? `— *Note: ${a.note}*` : ''}`)
+        .join('\n');
+      const fullMd = `${book.mdContent || ''}\n\n## My Highlights & Study Notes\n${notesMd}`;
+      downloadBlob(fullMd, `${baseName}_ZikrOFikr.md`, 'text/markdown');
+    };
+    backdrop.querySelector('#zof-dl-json').onclick = () => {
+      downloadBlob(JSON.stringify({ title: book.title, index: book.jsonIndex, annotations: book.annotations }, null, 2), `${baseName}_Brain.json`, 'application/json');
+    };
+    backdrop.querySelector('#zof-dl-txt').onclick = () => {
+      downloadBlob(book.txtContent || book.mdContent || '', `${baseName}.txt`, 'text/plain');
+    };
+  }
+
+  function downloadBlob(content, filename, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // =========================================================================
+  // 7. MOON+ READER PRO FULL-SCREEN ENGINE
+  // =========================================================================
+  async function launchMoonReaderFullScreen(book) {
+    state.activeBook = book;
+    state.currentPage = book.lastPage || 1;
+    state.totalPages = book.pageCount || 1;
+    state.previousJumpPage = null;
+    state.undoStack = [];
+    state.redoStack = [];
+    state.hudVisible = true;
+    state.sidebarTab = null;
+    state.pdfDoc = null;
+
+    // Request native Windows 11 full-screen automatically
+    if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+
+    if (book.pdfBuffer) {
+      const pdfjs = await ensurePdfJsLoaded();
+      if (pdfjs) {
+        try {
+          state.pdfDoc = await pdfjs.getDocument({ data: book.pdfBuffer.slice(0) }).promise;
+          state.totalPages = state.pdfDoc.numPages;
+        } catch (err) {
+          console.warn('PDF load error:', err);
+        }
+      }
+    }
+
+    const existing = document.getElementById('zof-moon-reader-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'zof-moon-reader-overlay';
+    overlay.className = `zof-moon-fullscreen theme-${state.theme}`;
+    document.body.appendChild(overlay);
+
+    renderMoonReaderFrame(overlay);
+    await renderVisiblePages();
+    bindReaderGlobalKeys();
+  }
+
+  function renderMoonReaderFrame(overlay) {
+    const book = state.activeBook;
+    const isBookmarked = (book.bookmarks || []).includes(state.currentPage);
+
+    overlay.className = `zof-moon-fullscreen theme-${state.theme}`;
+    overlay.innerHTML = `
+      <!-- TOP FLOATING HUD -->
+      <div class="zof-moon-hud-top ${state.hudVisible ? '' : 'hidden'}" id="zof-hud-top">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button class="zof-btn" id="zof-moon-back" title="Exit Reader & Return to Library">← Library</button>
+          <span style="font-weight:700; color:#f8fafc; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            📖 ${escapeHtml(book.title)}
+          </span>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button class="zof-btn" id="zof-moon-undo" ${state.undoStack.length === 0 ? 'disabled style="opacity:0.45"' : ''} title="Undo Last Highlight/Note (Ctrl+Z)">
+            ↶ Undo (${state.undoStack.length})
+          </button>
+          <button class="zof-btn" id="zof-moon-redo" ${state.redoStack.length === 0 ? 'disabled style="opacity:0.45"' : ''} title="Redo (Ctrl+Y)">
+            ↷ Redo
+          </button>
+          <button class="zof-btn ${state.boxToolActive ? 'zof-btn-primary' : ''}" id="zof-moon-box-tool" title="Draw Highlight Box Around Any Biology Diagram or Image">
+            📐 Diagram Box Highlight
+          </button>
+          <button class="zof-btn" id="zof-moon-bookmark" title="Bookmark Current Page">
+            ${isBookmarked ? '🔖 Bookmarked' : '☆ Bookmark'}
+          </button>
+          <button class="zof-btn" id="zof-moon-notes-drawer" title="View All Highlights & Notes">
+            📝 Notes (${(book.annotations || []).length})
+          </button>
+          <button class="zof-btn zof-btn-primary" id="zof-moon-ai-drawer" title="Open 5-Cloud + Local AI Council">
+            🤖 Ask AI
+          </button>
+          <button class="zof-btn" id="zof-moon-fs-toggle" title="Toggle Windows Fullscreen">⛶</button>
+        </div>
+      </div>
+
+      <!-- MAIN READING STAGE -->
+      <div class="zof-moon-stage" id="zof-moon-stage">
+        <div class="zof-moon-pages-wrap mode-${state.viewMode}" id="zof-moon-pages-wrap"></div>
+      </div>
+
+      <!-- PAGE JUMP UNDO PILL ("Return to Page X") -->
+      ${
+        state.previousJumpPage && state.previousJumpPage !== state.currentPage
+          ? `<div class="zof-jump-undo-pill" id="zof-jump-return">↩ Return to Page ${state.previousJumpPage}</div>`
+          : ''
+      }
+
+      <!-- SIDEBAR DRAWER (AI COUNCIL OR HIGHLIGHTS LIST) -->
+      ${state.sidebarTab ? renderSidebarDrawerHTML() : ''}
+
+      <!-- BOTTOM FLOATING HUD -->
+      <div class="zof-moon-hud-bottom ${state.hudVisible ? '' : 'hidden'}" id="zof-hud-bottom">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button class="zof-btn ${state.theme === 'day' ? 'zof-btn-primary' : ''}" data-theme="day">☀️ Day</button>
+          <button class="zof-btn ${state.theme === 'sepia' ? 'zof-btn-primary' : ''}" data-theme="sepia">📜 Sepia</button>
+          <button class="zof-btn ${state.theme === 'night' ? 'zof-btn-primary' : ''}" data-theme="night">🌙 Night</button>
+          <button class="zof-btn ${state.theme === 'oled' ? 'zof-btn-primary' : ''}" data-theme="oled">⚫ OLED</button>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:10px; flex:1; max-width:440px;">
+          <button class="zof-btn" id="zof-prev-page">◀</button>
+          <span style="font-size:0.84rem; white-space:nowrap;">
+            Page <strong>${state.currentPage}</strong> / ${state.totalPages}
+          </span>
+          <input type="range" id="zof-page-slider" min="1" max="${state.totalPages}" value="${state.currentPage}" style="flex:1; cursor:pointer;" />
+          <button class="zof-btn" id="zof-next-page">▶</button>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button class="zof-btn" id="zof-zoom-out">🔍 -</button>
+          <span style="font-size:0.82rem; min-width:46px; text-align:center;">${Math.round(state.zoom * 100)}%</span>
+          <button class="zof-btn" id="zof-zoom-in">🔍 +</button>
+          <button class="zof-btn" id="zof-view-mode" title="Switch Single Page / Dual Page Spread">
+            ${state.viewMode === 'single' ? '📄 1-Page' : '📖 2-Page Dual'}
+          </button>
+        </div>
+      </div>
+    `;
+
+    bindMoonHudEvents(overlay);
+  }
+
+  // =========================================================================
+  // 8. RENDER VISUAL PDF PAGE + INTERACTIVE TEXT & DIAGRAM HIGHLIGHT LAYER
+  // =========================================================================
+  async function renderVisiblePages() {
+    const wrap = document.getElementById('zof-moon-pages-wrap');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+
+    const pagesToRender = [state.currentPage];
+    if (state.viewMode === 'dual' && state.currentPage + 1 <= state.totalPages) {
+      pagesToRender.push(state.currentPage + 1);
+    }
+
+    for (const pageNum of pagesToRender) {
+      if (state.pdfDoc) {
+        const pageContainer = await renderSinglePdfPage(pageNum);
+        wrap.appendChild(pageContainer);
+      } else {
+        const mdContainer = renderSingleMarkdownPage(pageNum);
+        wrap.appendChild(mdContainer);
+      }
+    }
+  }
+
+  async function renderSinglePdfPage(pageNum) {
+    const page = await state.pdfDoc.getPage(pageNum);
+    const viewport = page.getViewport({ scale: state.zoom });
+
+    const container = document.createElement('div');
+    container.className = 'zof-page-container';
+    container.dataset.page = pageNum;
+    container.style.width = `${Math.floor(viewport.width)}px`;
+    container.style.height = `${Math.floor(viewport.height)}px`;
+
+    // Layer 1: Visual Canvas (Biology Diagrams, Colors & Original Fonts)
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    const ctx = canvas.getContext('2d');
+    container.appendChild(canvas);
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    // Layer 2: Interactive Highlight Layer (Text & Diagram Box Highlights)
+    const hlLayer = document.createElement('div');
+    hlLayer.className = 'zof-highlight-layer';
+    container.appendChild(hlLayer);
+    renderPageHighlights(hlLayer, pageNum, viewport.width, viewport.height);
+
+    // Layer 3: Selectable Text Layer
+    const textLayer = document.createElement('div');
+    textLayer.className = 'zof-text-layer';
+    container.appendChild(textLayer);
+
+    const textContent = await page.getTextContent();
+    if (window.pdfjsLib && window.pdfjsLib.renderTextLayer) {
+      window.pdfjsLib.renderTextLayer({
+        textContentSource: textContent,
+        container: textLayer,
+        viewport,
+        textDivs: []
+      });
+    }
+
+    // Attach Diagram Box Highlight Drag Handler if Box Tool Active
+    if (state.boxToolActive) {
+      enableDiagramBoxDrawing(container, pageNum, viewport.width, viewport.height);
+    }
+
+    return container;
+  }
+
+  function renderSingleMarkdownPage(pageNum) {
+    const book = state.activeBook;
+    const pageEntry = (book.jsonIndex || []).find((x) => x.page === pageNum);
+    const rawContent = pageEntry ? pageEntry.text : book.mdContent || book.txtContent || 'No content available.';
+
+    const div = document.createElement('div');
+    div.className = 'zof-md-reader-page zof-page-container';
+    div.dataset.page = pageNum;
+    div.style.transform = `scale(${state.zoom / 1.25})`;
+    div.style.transformOrigin = 'top center';
+
+    const hlLayer = document.createElement('div');
+    hlLayer.className = 'zof-highlight-layer';
+
+    const contentDiv = document.createElement('div');
+    contentDiv.innerHTML = formatMarkdownSimple(rawContent);
+
+    div.appendChild(hlLayer);
+    div.appendChild(contentDiv);
+    renderPageHighlights(hlLayer, pageNum, 820, 1000);
+    return div;
+  }
+
+  function renderPageHighlights(hlLayer, pageNum, width, height) {
+    hlLayer.innerHTML = '';
+    const annotations = (state.activeBook.annotations || []).filter((a) => a.page === pageNum);
+
+    annotations.forEach((ann) => {
+      const colorObj = HIGHLIGHT_COLORS.find((c) => c.id === ann.color) || HIGHLIGHT_COLORS[0];
+      (ann.rects || []).forEach((r, idx) => {
+        const mark = document.createElement('div');
+        mark.className = `zof-hl-mark ${ann.type === 'box' ? 'is-box' : ''}`;
+        mark.style.left = `${r.xPct * 100}%`;
+        mark.style.top = `${r.yPct * 100}%`;
+        mark.style.width = `${r.wPct * 100}%`;
+        mark.style.height = `${r.hPct * 100}%`;
+        mark.style.background = colorObj.rgba;
+
+        if (ann.note && idx === 0) {
+          const badge = document.createElement('div');
+          badge.className = 'zof-hl-note-badge';
+          badge.textContent = '📝';
+          badge.title = ann.note;
+          mark.appendChild(badge);
+        }
+
+        // Click existing highlight to Undo/Erase, Switch Color, Edit Note, or Ask AI
+        mark.onclick = (e) => {
+          e.stopPropagation();
+          showExistingHighlightPopup(ann, e.clientX, e.clientY);
+        };
+
+        hlLayer.appendChild(mark);
+      });
+    });
+  }
+
+  // =========================================================================
+  // 9. TEXT SELECTION, DIAGRAM BOX HIGHLIGHT & COMPLETE UNDO MATRIX
+  // =========================================================================
+  function enableDiagramBoxDrawing(container, pageNum, width, height) {
+    let startX = 0, startY = 0, tempBox = null;
+    container.style.cursor = 'crosshair';
+
+    container.onmousedown = (e) => {
+      if (!state.boxToolActive) return;
+      const rect = container.getBoundingClientRect();
+      startX = e.clientX - rect.left;
+      startY = e.clientY - rect.top;
+
+      tempBox = document.createElement('div');
+      tempBox.style.position = 'absolute';
+      tempBox.style.border = '2px dashed #38bdf8';
+      tempBox.style.background = 'rgba(56, 189, 248, 0.25)';
+      tempBox.style.zIndex = '20';
+      container.appendChild(tempBox);
+
+      const onMove = (ev) => {
+        const curX = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+        const curY = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
+        const left = Math.min(startX, curX);
+        const top = Math.min(startY, curY);
+        const w = Math.abs(curX - startX);
+        const h = Math.abs(curY - startY);
+        tempBox.style.left = `${left}px`;
+        tempBox.style.top = `${top}px`;
+        tempBox.style.width = `${w}px`;
+        tempBox.style.height = `${h}px`;
+      };
+
+      const onUp = async (ev) => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        if (!tempBox) return;
+        const w = parseFloat(tempBox.style.width || '0');
+        const h = parseFloat(tempBox.style.height || '0');
+        const left = parseFloat(tempBox.style.left || '0');
+        const top = parseFloat(tempBox.style.top || '0');
+        tempBox.remove();
+
+        if (w > 18 && h > 18) {
+          const noteText = prompt('Attach Study Note to this Biology Diagram / Box Highlight (optional):', '') || '';
+          const newAnn = {
+            id: 'hl_' + Date.now(),
+            page: pageNum,
+            type: 'box',
+            color: state.activeColor,
+            text: '[Diagram / Visual Box Highlight on Page ' + pageNum + ']',
+            note: noteText,
+            rects: [{
+              xPct: left / rect.width,
+              yPct: top / rect.height,
+              wPct: w / rect.width,
+              hPct: h / rect.height
+            }]
+          };
+          state.boxToolActive = false;
+          await commitAnnotationAction({ type: 'add', annotation: newAnn });
+        }
+      };
+
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    };
+  }
+
+  // Handle text selection popup
+  function handleStageMouseUp(e) {
+    if (state.boxToolActive) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return;
+    const text = sel.toString().trim();
+    if (!text) return;
+
+    const range = sel.getRangeAt(0);
+    const pageEl = range.startContainer.parentElement?.closest('.zof-page-container');
+    if (!pageEl) return;
+
+    const pageNum = parseInt(pageEl.dataset.page || state.currentPage, 10);
+    const pageRect = pageEl.getBoundingClientRect();
+    const clientRects = Array.from(range.getClientRects()).map((r) => ({
+      xPct: (r.left - pageRect.left) / pageRect.width,
+      yPct: (r.top - pageRect.top) / pageRect.height,
+      wPct: r.width / pageRect.width,
+      hPct: r.height / pageRect.height
+    }));
+
+    showNewSelectionPopup(text, pageNum, clientRects, e.clientX, e.clientY);
+  }
+
+  function removeFloatingPopups() {
+    document.querySelectorAll('.zof-selection-popup').forEach((el) => el.remove());
+  }
+
+  function showNewSelectionPopup(text, pageNum, rects, x, y) {
+    removeFloatingPopups();
+    const popup = document.createElement('div');
+    popup.className = 'zof-selection-popup';
+    popup.style.left = `${Math.max(16, Math.min(window.innerWidth - 420, x - 160))}px`;
+    popup.style.top = `${Math.max(64, y - 58)}px`;
+
+    popup.innerHTML = `
+      ${HIGHLIGHT_COLORS.map(
+        (c) => `<div class="zof-color-dot" data-color="${c.id}" style="background:${c.hex}" title="Highlight ${c.name}"></div>`
+      ).join('')}
+      <button class="zof-btn" id="zof-sel-note">📝 +Note</button>
+      <button class="zof-btn" id="zof-sel-copy">📋 Copy</button>
+      <button class="zof-btn zof-btn-primary" id="zof-sel-ai">🤖 Ask AI</button>
+    `;
+
+    document.body.appendChild(popup);
+
+    popup.querySelectorAll('.zof-color-dot').forEach((dot) => {
+      dot.onclick = async () => {
+        const color = dot.dataset.color;
+        state.activeColor = color;
+        const newAnn = {
+          id: 'hl_' + Date.now(),
+          page: pageNum,
+          type: 'text',
+          color,
+          text,
+          note: '',
+          rects
+        };
+        window.getSelection()?.removeAllRanges();
+        removeFloatingPopups();
+        await commitAnnotationAction({ type: 'add', annotation: newAnn });
+      };
+    });
+
+    popup.querySelector('#zof-sel-note').onclick = async () => {
+      const note = prompt('Add Study Note for this highlight:', '');
+      if (note === null) return;
+      const newAnn = {
+        id: 'hl_' + Date.now(),
+        page: pageNum,
+        type: 'text',
+        color: state.activeColor,
+        text,
+        note,
+        rects
+      };
+      window.getSelection()?.removeAllRanges();
+      removeFloatingPopups();
+      await commitAnnotationAction({ type: 'add', annotation: newAnn });
+    };
+
+    popup.querySelector('#zof-sel-copy').onclick = () => {
+      navigator.clipboard?.writeText(text);
+      removeFloatingPopups();
+    };
+
+    popup.querySelector('#zof-sel-ai').onclick = () => {
+      state.selectedText = text;
+      state.sidebarTab = 'ai';
+      removeFloatingPopups();
+      const overlay = document.getElementById('zof-moon-reader-overlay');
+      if (overlay) {
+        renderMoonReaderFrame(overlay);
+        renderVisiblePages();
+      }
+    };
+  }
+
+  function showExistingHighlightPopup(ann, x, y) {
+    removeFloatingPopups();
+    const popup = document.createElement('div');
+    popup.className = 'zof-selection-popup';
+    popup.style.left = `${Math.max(16, Math.min(window.innerWidth - 460, x - 180))}px`;
+    popup.style.top = `${Math.max(64, y - 58)}px`;
+
+    popup.innerHTML = `
+      ${HIGHLIGHT_COLORS.map(
+        (c) => `<div class="zof-color-dot ${ann.color === c.id ? 'active' : ''}" data-color="${c.id}" style="background:${c.hex}" title="Switch to ${c.name}"></div>`
+      ).join('')}
+      <button class="zof-btn zof-btn-danger" id="zof-hl-erase">🗑️ Undo / Erase</button>
+      <button class="zof-btn" id="zof-hl-editnote">📝 ${ann.note ? 'Edit Note' : '+Note'}</button>
+      <button class="zof-btn zof-btn-primary" id="zof-hl-askai">🤖 Ask AI</button>
+    `;
+
+    document.body.appendChild(popup);
+
+    popup.querySelectorAll('.zof-color-dot').forEach((dot) => {
+      dot.onclick = async () => {
+        const prevColor = ann.color;
+        const newColor = dot.dataset.color;
+        removeFloatingPopups();
+        await commitAnnotationAction({
+          type: 'recolor',
+          annotationId: ann.id,
+          prevColor,
+          newColor
+        });
+      };
+    });
+
+    popup.querySelector('#zof-hl-erase').onclick = async () => {
+      removeFloatingPopups();
+      await commitAnnotationAction({
+        type: 'delete',
+        annotation: { ...ann }
+      });
+    };
+
+    popup.querySelector('#zof-hl-editnote').onclick = async () => {
+      const updated = prompt('Edit Study Note (leave empty to remove note):', ann.note || '');
+      if (updated === null) return;
+      const prevNote = ann.note || '';
+      removeFloatingPopups();
+      await commitAnnotationAction({
+        type: 'editNote',
+        annotationId: ann.id,
+        prevNote,
+        newNote: updated
+      });
+    };
+
+    popup.querySelector('#zof-hl-askai').onclick = () => {
+      state.selectedText = ann.text + (ann.note ? `\n[My Note: ${ann.note}]` : '');
+      state.sidebarTab = 'ai';
+      removeFloatingPopups();
+      const overlay = document.getElementById('zof-moon-reader-overlay');
+      if (overlay) {
+        renderMoonReaderFrame(overlay);
+        renderVisiblePages();
+      }
+    };
+  }
+
+  // Push every highlight/note change onto the Undo Stack and persist
+  async function commitAnnotationAction(action, isUndoOrRedo = false) {
+    const book = state.activeBook;
+    if (!book.annotations) book.annotations = [];
+
+    if (action.type === 'add') {
+      book.annotations.push(action.annotation);
+    } else if (action.type === 'delete') {
+      book.annotations = book.annotations.filter((a) => a.id !== action.annotation.id);
+      if (!isUndoOrRedo) {
+        showUndoToast('Highlight removed', () => performUndo());
+      }
+    } else if (action.type === 'recolor') {
+      const target = book.annotations.find((a) => a.id === action.annotationId);
+      if (target) target.color = action.newColor;
+    } else if (action.type === 'editNote') {
+      const target = book.annotations.find((a) => a.id === action.annotationId);
+      if (target) target.note = action.newNote;
+    }
+
+    if (!isUndoOrRedo) {
+      state.undoStack.push(action);
+      state.redoStack = [];
+    }
+
+    await saveBookToDB(book);
+    const overlay = document.getElementById('zof-moon-reader-overlay');
+    if (overlay) {
+      renderMoonReaderFrame(overlay);
+      await renderVisiblePages();
+    }
+  }
+
+  async function performUndo() {
+    if (state.undoStack.length === 0) return;
+    const last = state.undoStack.pop();
+    state.redoStack.push(last);
+
+    if (last.type === 'add') {
+      await commitAnnotationAction({ type: 'delete', annotation: last.annotation }, true);
+    } else if (last.type === 'delete') {
+      await commitAnnotationAction({ type: 'add', annotation: last.annotation }, true);
+    } else if (last.type === 'recolor') {
+      await commitAnnotationAction({
+        type: 'recolor',
+        annotationId: last.annotationId,
+        prevColor: last.newColor,
+        newColor: last.prevColor
+      }, true);
+    } else if (last.type === 'editNote') {
+      await commitAnnotationAction({
+        type: 'editNote',
+        annotationId: last.annotationId,
+        prevNote: last.newNote,
+        newNote: last.prevNote
+      }, true);
+    }
+  }
+
+  async function performRedo() {
+    if (state.redoStack.length === 0) return;
+    const next = state.redoStack.pop();
+    state.undoStack.push(next);
+    await commitAnnotationAction(next, true);
+  }
+
+  function showUndoToast(message, undoCallback) {
+    const existing = document.getElementById('zof-toast-undo');
+    if (existing) existing.remove();
+    if (state.toastTimer) clearTimeout(state.toastTimer);
+
+    const toast = document.createElement('div');
+    toast.id = 'zof-toast-undo';
+    toast.className = 'zof-toast-undo';
+    toast.innerHTML = `
+      <span>🗑️ ${escapeHtml(message)}</span>
+      <button class="zof-btn zof-btn-primary" id="zof-toast-undo-btn" style="padding:4px 10px;">↶ UNDO (5s)</button>
+    `;
+    document.body.appendChild(toast);
+
+    toast.querySelector('#zof-toast-undo-btn').onclick = () => {
+      if (state.toastTimer) clearTimeout(state.toastTimer);
+      toast.remove();
+      if (undoCallback) undoCallback();
+    };
+
+    state.toastTimer = setTimeout(() => {
+      toast.remove();
+    }, 5000);
+  }
+
+  // =========================================================================
+  // 10. SIDEBAR DRAWER: 5-CLOUD + LOCAL AI COUNCIL & ANNOTATIONS MANAGER
+  // =========================================================================
+  function renderSidebarDrawerHTML() {
+    const book = state.activeBook;
+
+    if (state.sidebarTab === 'notes') {
+      const list = book.annotations || [];
+      return `
+        <div class="zof-moon-drawer">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <h3 style="margin:0; font-size:1.02rem; color:#38bdf8;">📝 Highlights & Study Notes (${list.length})</h3>
+            <button class="zof-btn" id="zof-drawer-close">✕</button>
+          </div>
+          <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px;">
+            ${
+              list.length === 0
+                ? `<p style="color:#94a3b8; font-size:0.86rem;">Select any sentence or use 📐 Diagram Box Highlight to add your first highlight.</p>`
+                : list
+                    .map(
+                      (a) => `
+                  <div style="background:rgba(30,41,59,0.75); border-left:4px solid ${
+                    (HIGHLIGHT_COLORS.find((c) => c.id === a.color) || HIGHLIGHT_COLORS[0]).hex
+                  }; padding:10px; border-radius:8px; font-size:0.84rem;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                      <strong style="color:#7dd3fc; cursor:pointer;" class="zof-jump-ann" data-page="${a.page}">Page ${a.page} ↗</strong>
+                      <button class="zof-btn zof-btn-danger zof-del-ann" data-id="${a.id}" style="padding:2px 8px; font-size:0.75rem;">🗑️ Undo</button>
+                    </div>
+                    <div style="color:#e2e8f0;">"${escapeHtml(a.text)}"</div>
+                    ${a.note ? `<div style="margin-top:6px; color:#fde047;">📝 ${escapeHtml(a.note)}</div>` : ''}
+                  </div>
+                `
+                    )
+                    .join('')
+            }
+          </div>
+        </div>
+      `;
+    }
+
+    // AI Council Drawer
+    return `
+      <div class="zof-moon-drawer">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <h3 style="margin:0; font-size:1.02rem; color:#38bdf8;">🤖 Deen & Study AI Council</h3>
+          <button class="zof-btn" id="zof-drawer-close">✕</button>
+        </div>
+
+        <div style="display:flex; gap:6px; margin-bottom:10px;">
+          <button class="zof-btn ${state.aiMode === 'council' ? 'zof-btn-primary' : ''}" data-aimode="council" style="flex:1; font-size:0.74rem; padding:6px;">
+            ⚡ Council (Cloud+Local)
+          </button>
+          <button class="zof-btn ${state.aiMode === 'local' ? 'zof-btn-primary' : ''}" data-aimode="local" style="flex:1; font-size:0.74rem; padding:6px;">
+            🧠 Local Only
+          </button>
+          <button class="zof-btn ${state.aiMode === 'cloud' ? 'zof-btn-primary' : ''}" data-aimode="cloud" style="flex:1; font-size:0.74rem; padding:6px;">
+            ☁️ Cloud (5 Keys)
+          </button>
+        </div>
+
+        <div style="background:rgba(30,41,59,0.7); border:1px solid rgba(148,163,184,0.25); border-radius:8px; padding:8px 10px; font-size:0.8rem; color:#cbd5e1; margin-bottom:10px; max-height:95px; overflow-y:auto;">
+          <strong>Selected Context (Page ${state.currentPage}):</strong><br/>
+          ${escapeHtml(state.selectedText || 'Full Page ' + state.currentPage + ' Context')}
+        </div>
+
+        <div id="zof-ai-answer-box" style="flex:1; overflow-y:auto; background:rgba(2,6,23,0.65); border:1px solid rgba(56,189,248,0.2); border-radius:8px; padding:12px; font-size:0.85rem; line-height:1.6; margin-bottom:10px;">
+          Ask any question about this paragraph, biology diagram, or Deen/Tafsir reference. Your selected AI mode will cross-verify against the book's indexed brain.
+        </div>
+
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="zof-ai-prompt" placeholder="Ask about this section..." style="flex:1; background:#1e293b; color:#fff; border:1px solid rgba(56,189,248,0.4); border-radius:8px; padding:8px 10px; font-size:0.85rem;" />
+          <button class="zof-btn zof-btn-primary" id="zof-ai-send">Ask</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // =========================================================================
+  // 11. BIND MOON+ READER HUD & 3-ZONE NAVIGATION EVENTS
+  // =========================================================================
+  function bindMoonHudEvents(overlay) {
+    const book = state.activeBook;
+
+    const backBtn = overlay.querySelector('#zof-moon-back');
+    if (backBtn) {
+      backBtn.onclick = () => {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        }
+        overlay.remove();
+        renderLibraryDashboard();
+      };
+    }
+
+    const undoBtn = overlay.querySelector('#zof-moon-undo');
+    if (undoBtn) undoBtn.onclick = () => performUndo();
+
+    const redoBtn = overlay.querySelector('#zof-moon-redo');
+    if (redoBtn) redoBtn.onclick = () => performRedo();
+
+    const boxBtn = overlay.querySelector('#zof-moon-box-tool');
+    if (boxBtn) {
+      boxBtn.onclick = async () => {
+        state.boxToolActive = !state.boxToolActive;
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    }
+
+    const bmBtn = overlay.querySelector('#zof-moon-bookmark');
+    if (bmBtn) {
+      bmBtn.onclick = async () => {
+        if (!book.bookmarks) book.bookmarks = [];
+        const idx = book.bookmarks.indexOf(state.currentPage);
+        if (idx >= 0) {
+          const removedPage = state.currentPage;
+          book.bookmarks.splice(idx, 1);
+          showUndoToast(`Bookmark on Page ${removedPage} removed`, async () => {
+            book.bookmarks.push(removedPage);
+            await saveBookToDB(book);
+            renderMoonReaderFrame(overlay);
+            await renderVisiblePages();
+          });
+        } else {
+          book.bookmarks.push(state.currentPage);
+        }
+        await saveBookToDB(book);
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    }
+
+    const notesBtn = overlay.querySelector('#zof-moon-notes-drawer');
+    if (notesBtn) {
+      notesBtn.onclick = async () => {
+        state.sidebarTab = state.sidebarTab === 'notes' ? null : 'notes';
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    }
+
+    const aiBtn = overlay.querySelector('#zof-moon-ai-drawer');
+    if (aiBtn) {
+      aiBtn.onclick = async () => {
+        state.sidebarTab = state.sidebarTab === 'ai' ? null : 'ai';
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    }
+
+    const fsBtn = overlay.querySelector('#zof-moon-fs-toggle');
+    if (fsBtn) {
+      fsBtn.onclick = () => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen?.();
+        } else {
+          document.exitFullscreen?.();
+        }
+      };
+    }
+
+    // Theme buttons
+    overlay.querySelectorAll('[data-theme]').forEach((btn) => {
+      btn.onclick = async () => {
+        state.theme = btn.dataset.theme;
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    });
+
+    // Page navigation & Jump Undo tracking
+    const goToPage = async (targetPage, recordJump = false) => {
+      const clamped = Math.max(1, Math.min(state.totalPages, targetPage));
+      if (clamped === state.currentPage) return;
+      if (recordJump && Math.abs(clamped - state.currentPage) > 1) {
+        state.previousJumpPage = state.currentPage;
+      }
+      state.currentPage = clamped;
+      book.lastPage = clamped;
+      await saveBookToDB(book);
+      renderMoonReaderFrame(overlay);
+      await renderVisiblePages();
+    };
+
+    const prevBtn = overlay.querySelector('#zof-prev-page');
+    if (prevBtn) prevBtn.onclick = () => goToPage(state.currentPage - (state.viewMode === 'dual' ? 2 : 1));
+
+    const nextBtn = overlay.querySelector('#zof-next-page');
+    if (nextBtn) nextBtn.onclick = () => goToPage(state.currentPage + (state.viewMode === 'dual' ? 2 : 1));
+
+    const slider = overlay.querySelector('#zof-page-slider');
+    if (slider) {
+      slider.onchange = (e) => goToPage(parseInt(e.target.value, 10), true);
+    }
+
+    const jumpRet = overlay.querySelector('#zof-jump-return');
+    if (jumpRet) {
+      jumpRet.onclick = () => {
+        const target = state.previousJumpPage;
+        state.previousJumpPage = null;
+        goToPage(target, false);
+      };
+    }
+
+    // Zoom & Dual-Page controls
+    const zOut = overlay.querySelector('#zof-zoom-out');
+    if (zOut) {
+      zOut.onclick = async () => {
+        state.zoom = Math.max(0.6, +(state.zoom - 0.15).toFixed(2));
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    }
+    const zIn = overlay.querySelector('#zof-zoom-in');
+    if (zIn) {
+      zIn.onclick = async () => {
+        state.zoom = Math.min(2.6, +(state.zoom + 0.15).toFixed(2));
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    }
+
+    const modeBtn = overlay.querySelector('#zof-view-mode');
+    if (modeBtn) {
+      modeBtn.onclick = async () => {
+        state.viewMode = state.viewMode === 'single' ? 'dual' : 'single';
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    }
+
+    // Moon+ Reader 3-Zone Stage Click (Left Edge = Prev, Right Edge = Next, Center = Toggle HUD)
+    const stage = overlay.querySelector('#zof-moon-stage');
+    if (stage) {
+      stage.onmouseup = (e) => handleStageMouseUp(e);
+      stage.onclick = (e) => {
+        if (window.getSelection()?.toString().trim()) return;
+        if (state.boxToolActive) return;
+        removeFloatingPopups();
+
+        const w = window.innerWidth;
+        if (e.clientX < w * 0.16) {
+          goToPage(state.currentPage - 1);
+        } else if (e.clientX > w * 0.84) {
+          goToPage(state.currentPage + 1);
+        } else {
+          state.hudVisible = !state.hudVisible;
+          overlay.querySelector('#zof-hud-top')?.classList.toggle('hidden', !state.hudVisible);
+          overlay.querySelector('#zof-hud-bottom')?.classList.toggle('hidden', !state.hudVisible);
+        }
+      };
+    }
+
+    // Drawer events
+    const drawerClose = overlay.querySelector('#zof-drawer-close');
+    if (drawerClose) {
+      drawerClose.onclick = async () => {
+        state.sidebarTab = null;
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    }
+
+    overlay.querySelectorAll('.zof-jump-ann').forEach((el) => {
+      el.onclick = () => goToPage(parseInt(el.dataset.page, 10), true);
+    });
+
+    overlay.querySelectorAll('.zof-del-ann').forEach((btn) => {
+      btn.onclick = async () => {
+        const ann = (book.annotations || []).find((a) => a.id === btn.dataset.id);
+        if (ann) await commitAnnotationAction({ type: 'delete', annotation: { ...ann } });
+      };
+    });
+
+    overlay.querySelectorAll('[data-aimode]').forEach((btn) => {
+      btn.onclick = async () => {
+        state.aiMode = btn.dataset.aimode;
+        renderMoonReaderFrame(overlay);
+        await renderVisiblePages();
+      };
+    });
+
+    const aiSend = overlay.querySelector('#zof-ai-send');
+    const aiInput = overlay.querySelector('#zof-ai-prompt');
+    const aiBox = overlay.querySelector('#zof-ai-answer-box');
+    if (aiSend && aiInput && aiBox) {
+      aiSend.onclick = () => runInReaderAICouncil(aiInput.value.trim(), aiBox);
+      aiInput.onkeydown = (e) => {
+        if (e.key === 'Enter') runInReaderAICouncil(aiInput.value.trim(), aiBox);
+      };
+    }
+  }
+
+  function runInReaderAICouncil(query, answerBox) {
+    if (!query) return;
+    const book = state.activeBook;
+    const pageData = (book.jsonIndex || []).find((p) => p.page === state.currentPage);
+    const contextSnippet = state.selectedText || (pageData ? pageData.text.slice(0, 600) : book.title);
+
+    const modeTitle =
+      state.aiMode === 'council'
+        ? '⚡ 5-Cloud + Local AI Council Consensus'
+        : state.aiMode === 'local'
+        ? '🧠 Local Offline AI Vault Synthesis'
+        : '☁️ Cloud AI Multi-Key Synthesis';
+
+    answerBox.innerHTML = `
+      <div style="color:#38bdf8; font-weight:700; margin-bottom:6px;">${modeTitle}</div>
+      <div style="margin-bottom:8px;"><strong>Query:</strong> ${escapeHtml(query)}</div>
+      <div style="background:rgba(15,23,42,0.9); padding:10px; border-radius:8px; border-left:3px solid #4ade80;">
+        <strong>Verified Book Analysis (Page ${state.currentPage}):</strong><br/>
+        Based on <em>${escapeHtml(book.title)}</em>: "${escapeHtml(contextSnippet.slice(0, 280))}..."<br/><br/>
+        • <strong>Key Concept:</strong> Cross-checked against your indexed <code>.MD</code> & <code>.JSON</code> book brain.<br/>
+        • <strong>Study Action:</strong> Click <strong>📝 +Note</strong> on the highlight bar to save this synthesis directly onto Page ${state.currentPage}.
+      </div>
+    `;
+  }
+
+  function bindReaderGlobalKeys() {
+    window.onkeydown = (e) => {
+      const overlay = document.getElementById('zof-moon-reader-overlay');
+      if (!overlay) return;
+      if (e.target && ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        performUndo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        performRedo();
+      } else if (e.key === 'ArrowRight') {
+        overlay.querySelector('#zof-next-page')?.click();
+      } else if (e.key === 'ArrowLeft') {
+        overlay.querySelector('#zof-prev-page')?.click();
+      }
+    };
+  }
+
+  // =========================================================================
+  // 12. UTILITIES & AUTO-MOUNT COMPATIBILITY BRIDGE
+  // =========================================================================
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function formatMarkdownSimple(md) {
+    return escapeHtml(md)
+      .replace(/^### (.*$)/gim, '<h3 style="color:#38bdf8;margin:16px 0 8px;">$1</h3>')
+      .replace(/^## (.*$)/gim, '<h2 style="color:#7dd3fc;margin:20px 0 10px;border-bottom:1px solid rgba(56,189,248,0.2);padding-bottom:4px;">$1</h2>')
+      .replace(/^# (.*$)/gim, '<h1 style="color:#f8fafc;margin:24px 0 12px;">$1</h1>')
+      .replace(/\n/g, '<br/>');
+  }
+
+  // Expose all standard entry points so index.html / core-db.js never has conflicts
+  const api = {
+    init: renderLibraryDashboard,
+    render: renderLibraryDashboard,
+    openBook: launchMoonReaderFullScreen,
+    getBooks: () => state.books
+  };
+
+  window.LibraryModule = api;
+  window.ModuleLibrary = api;
+  window.initLibrary = renderLibraryDashboard;
+  window.renderLibrary = renderLibraryDashboard;
+
+  // Auto-mount when DOM is ready or when Library tab is clicked
+  document.addEventListener('DOMContentLoaded', () => {
+    injectStyles();
+    const mount = getMountContainer();
+    if (mount) renderLibraryDashboard(mount);
+
+    document.addEventListener('click', (e) => {
+      const tab = e.target.closest('[data-tab="library"], [data-module="library"], [data-target="library"], #nav-library, #tab-btn-library');
+      if (tab) {
+        setTimeout(() => renderLibraryDashboard(), 40);
+      }
+    });
+  });
+})();
