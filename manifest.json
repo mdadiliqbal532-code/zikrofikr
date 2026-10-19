@@ -1,16 +1,20 @@
 {
-  "name": "ZikrOFikr OS — Moon+ Reader, Deen, 3-Gear AI & Study World",
-  "short_name": "ZikrOFikr",
+  "name": "Zikr-O-Fikr — Medical, Calibre, Moon+ Reader, Deen & AI Life OS",
+  "short_name": "ZikrOFikr OS",
+  "description": "Private Local-First Medical Study, Calibre + Moon+ Visual PDF Reader, Tarteel Quran, Local Masjid Salah Guard, Tasks & 10-Key AI Workstation",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#020617",
-  "theme_color": "#020617",
   "orientation": "any",
+  "background_color": "#070b14",
+  "theme_color": "#0284c7",
+  "categories": ["education", "medical", "productivity", "books"],
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/3145/3145765.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='26' fill='%23070b14'/%3E%3Crect x='6' y='6' width='116' height='116' rx='22' fill='none' stroke='%2338bdf8' stroke-width='4'/%3E%3Ctext x='64' y='78' font-size='52' text-anchor='middle' fill='%2338bdf8' font-family='Segoe UI, sans-serif' font-weight='bold'%3EZF%3C/text%3E%3C/svg%3E",
+      "sizes": "128x128 192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }
